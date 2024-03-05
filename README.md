@@ -1,7 +1,7 @@
 # AOSS POC
 
 1) Deploy
-2) Drop json in S3
+2) Drop json in S3.  Note, on first go, drop a single JSON file only, then drop the rest after initial file finishes processing.  Known potential race condition on index creation that doesn't have proper error handling ;-).
 
 *We expect trusted content to be in JSON format. Expected Minimum Json Format*
 ```
@@ -49,6 +49,12 @@ This "simulates" a client ui.  It calls search asynchronously and establishes a 
 
 # Important Security Note
 This needs a strong rewrite of CDK to reduce permission scopes. This is for rapid development prototyping only.
+
+# Notes regarding AOSS
+Amazon OpenSearch Service>Serverless: Dashboard
+
+1) Can set OU max to 2 index/2 search for prototyping purposes
+2) To use dashboard, go to Data access policies>articles-policy and add your console role to the principals
 
 # CDK Setup & Deploy
 

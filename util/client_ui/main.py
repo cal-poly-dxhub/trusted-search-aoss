@@ -110,7 +110,7 @@ async def client_ui(api_endpoint):
 
 def main():
     # set for your query.
-    USER_INPUT="Did trump attend sneaker con?"
+    USER_INPUT="Can trump run for office after capitol riot?"
 
 
     if( REST_X_API_KEY is None):
