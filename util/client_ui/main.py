@@ -10,6 +10,9 @@ import boto3
 from botocore.exceptions import ClientError
 import requests
 from dotenv import load_dotenv
+import time
+import itertools
+import sys
 
 load_dotenv()
 
@@ -66,25 +69,39 @@ rest_headers = {
 async def client_ui(api_endpoint):
     print(api_endpoint)
     #print(websocket_headers)
+    processing_done=False
+
+    async def spinner():
+        spinner = itertools.cycle(['-', '/', '|', '\\'])
+        print("Please wait ",end="")
+        while not processing_done:
+            sys.stdout.write(next(spinner))
+            sys.stdout.flush()
+            await asyncio.sleep(0.1)
+            sys.stdout.write('\b')
 
     async def open_connection():
         # Create a WebSocket connection
         async with websockets.connect(api_endpoint, extra_headers=websocket_headers) as websocket:
             try:
                 # Wait for a message from the server
+                spin = asyncio.Task(spinner())
                 message = await websocket.recv()
-
+                processing_done=True
+                spin.cancel()
                 json_object  = json.loads(message)
                 json_object["Payload"]["body"] = json.loads(json_object["Payload"]["body"])
                 json_formatted_str = json.dumps(json_object, indent=2)
-                print("====================================")
+                print("\n\n====================================")
                 print("          RECEIVED PAYLOAD          ")
                 print("====================================")
                 print(json_formatted_str)
                 #print(f"Received message: {message}")
             except Exception as e:
+                print("\n\n====================================")
                 print(f"An error occurred: {e}")
             finally:
+                print("\n\n====================================")
                 print("WebSocket connection closed.")
 
     await asyncio.gather(
@@ -92,6 +109,10 @@ async def client_ui(api_endpoint):
     )
 
 def main():
+    # set for your query.
+    USER_INPUT="Did trump attend sneaker con?"
+
+
     if( REST_X_API_KEY is None):
         raise ValueError("REST_SOCKET_X_API_KEY not set")
     if( WEBSOCKET_X_API_KEY is None):
@@ -99,9 +120,9 @@ def main():
     if( REST_API_ENDPOINT is None ):
         raise ValueError("REST_API_ENDPOINT not set")
     
-    USER_INPUT="Did trump attend sneaker con?"
     BUILT_ENDPOINT=REST_API_ENDPOINT+"api/async/search"
     print("Built REST URL: ", BUILT_ENDPOINT)
+    print("User input: ", USER_INPUT)
 
     # JSON payload
     payload = {
