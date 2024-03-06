@@ -1,5 +1,6 @@
 # AOSS POC
 
+0) Setup your environment for python CDK deploy (venv & installing requirements.txt) and setup your layers (check aoss_poc/lambda/custom_packages/src/README.md)
 1) Deploy
 2) Drop json in S3.  Note, on first go, drop a single JSON file only, then drop the rest after initial file finishes processing.  Known potential race condition on index creation that doesn't have proper error handling ;-).
 
