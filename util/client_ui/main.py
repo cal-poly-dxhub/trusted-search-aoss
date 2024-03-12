@@ -110,7 +110,7 @@ async def client_ui(api_endpoint):
 
 def main():
     # set for your query.
-    USER_INPUT="Can trump run for office after capitol riot?"
+    USER_INPUT="What’s in the Epstein documents?"
 
 
     if( REST_X_API_KEY is None):

@@ -123,6 +123,7 @@ def process(message):
             document = {
                 'content-id': item['id'],
                 'content-title': item['title'],
+                'content-raw-cleaned': cleaned_content,
                 'content-vector': embedding
             }
 

@@ -175,7 +175,7 @@ MODE_LIST = {
     "RAW":raw,
     "HYDE":hyde
     }
-MODE="HYDE"
+MODE="RAW"
 
 def handler(event,context):
     print(event)
