@@ -6,6 +6,7 @@ from requests_aws4auth import AWS4Auth
 from opensearchpy import OpenSearch, RequestsHttpConnection
 
 from string import Template
+import time
 
 
 # TODO -- Parameterize content vector
@@ -18,6 +19,7 @@ CORS_HEADERS = {
 AOSS_ENDPOINT = os.environ["AOSS_ENDPOINT"]
 # paramaterize this in the future
 AOSS_INDEX="trusted"
+AOSS_SEARCH_INDEX="user_queries"
 
 EMBEDDING_MODE="TITAN.TXT"
 # probably make this a shared python file so we don't duplicate code
@@ -219,6 +221,77 @@ def best_answer(question, search_results):
 
     return answer_text
 
+def check_index_searches():
+    response = aoss_client.indices.exists(AOSS_SEARCH_INDEX)
+    print('\Checking index:')
+    print(response)
+    return response
+
+def create_index_search():
+    response = aoss_client.indices.create(
+        AOSS_SEARCH_INDEX,
+        body={
+            "settings": {
+                "index.knn": True
+            },
+            "mappings": {
+                "properties": {
+                    "content-vector": {
+                        "type": "knn_vector",
+                        "dimension": EMBEDDING_SELECTION["dimensions"],
+                        "method": {
+                            "name": "hnsw",
+                            "space_type": "cosinesimil",
+                            "engine": "nmslib",
+                            "parameters": {
+                                "ef_construction": 512,
+                                "m": 32
+                            }
+                        }
+                    },
+                    "user-query": {
+                        "type": "text"
+                    },
+                    "similar-queries": {
+                        "type": "text"
+                    },
+                }
+            }
+        })
+    
+    print('\nCreating index:')
+    print(response)
+
+def find_nearest_query(user_input,embeddings):
+    query = {
+        'size': 1,
+        'query': {
+            'knn': {
+                "content-vector": {
+                    "vector": embeddings,
+                    "k": 5
+                }
+            }
+        }
+    }    
+    
+    response = aoss_client.search(
+        body = query,
+        index = AOSS_SEARCH_INDEX
+    )
+
+    max_score = -1 if response['hits']['max_score'] is None else response['hits']['max_score']
+    print("Max_Score: ", max_score)
+
+    print("~~~QUERY SEARCH RESULT~~~")
+    print(strip_knn_vector(response))
+    return {
+        "hits":len(response['hits']['hits']),
+        "max_score":max_score,
+        "response":response 
+    }
+           
+   
 def handler(event,context):
     print(event)
     print(context)
@@ -237,7 +310,42 @@ def handler(event,context):
 
         user_input = MODE_LIST[MODE](user_input)
         embedding=generate_embedding(user_input)
+        # cache logic
+        try:
+            cis_exists=check_index_searches()
+            if( cis_exists==False):
+                create_index_search()
+                wait_checks=0
+                wait_breaker=5
+                # Poll and wait for the index to be created (takes some time)
+                while not check_index_searches():
+                    print(f"Index  is not yet created. Waiting...")
+                    time.sleep(5)  # Sleep for 5 seconds before checking again
+                    wait_checks+=1
+                    if wait_checks >= wait_breaker:
+                        raise ValueError("AOSS Index Creation error. Waited to long. Breaking loop.")
+        except Exception as e:
+            print("AOSS index creation error: " + str(e) )
+        nearest_query_result=find_nearest_query(user_input=user_input,embeddings=embedding,)
+
+        SIMILARITY_THRESHOLD=.85 #threshold to consider a query as something that was asked before
+        if( nearest_query_result["hits"] == 0 or nearest_query_result["max_score"] < SIMILARITY_THRESHOLD):
+            #new user search term, add to queries doc store
+            search_results = search_aoss(embeddings=embedding,search_size=search_size)
+            print("~~~DOC SEARCH RESULT~~~")
+            print(strip_knn_vector(search_results))
+            answer = best_answer(question=user_input,search_results=search_results)
+            pass
+        else: #hit on similar query
+            # add to similar queries
+            # return similar query information
+            search_results = {}
+            answer= {}
+            pass       
+
+        # no cache hits
         search_results = search_aoss(embeddings=embedding,search_size=search_size)
+        print("~~~DOC SEARCH RESULT~~~")
         print(strip_knn_vector(search_results))
         answer = best_answer(question=user_input,search_results=search_results)
 
