@@ -177,6 +177,48 @@ MODE_LIST = {
     }
 MODE="RAW"
 
+def best_answer(question, search_results):
+    TEMPERATURE=0
+    TOP_P=.9
+    MAX_TOKENS_TO_SAMPLE=2048
+    TOP_K=250
+    merged_content = ''
+    for hit in search_results['hits']['hits']:
+        source = hit['_source']
+        if 'content-raw-cleaned' in source:
+            merged_content += source['content-raw-cleaned'] + '\n'
+    data = merged_content
+
+    prompt_string = """Human: You are to answer the question using the data in the following article.  Do not make up your answer, only use 
+    supporting data from the article, If you don't have enough data simply respond, I don't have enough information to answer that question. 
+    Given the following news article data [ $data ] can you please give a concise answer to the following question. $question
+    Assistant:
+    """
+    template = Template(prompt_string)
+    prompt = template.substitute(data=data,question=question)
+
+    # print(prompt)
+
+    BEDROCK_SELECTION["payload"]["prompt"] = prompt
+    BEDROCK_SELECTION["payload"]["temperature"] = TEMPERATURE
+    BEDROCK_SELECTION["payload"]["top_k"] = TOP_K
+    BEDROCK_SELECTION["payload"]["top_p"] = TOP_P
+    BEDROCK_SELECTION["payload"]["max_tokens_to_sample"] = MAX_TOKENS_TO_SAMPLE
+    body = json.dumps(BEDROCK_SELECTION["payload"])
+
+    response = bedrock_client.invoke_model(
+        body=body, 
+        modelId=BEDROCK_SELECTION["model_id"], 
+        accept=BEDROCK_SELECTION["accept"], 
+        contentType=BEDROCK_SELECTION["content_type"]
+    )
+    response_body = json.loads(response.get('body').read())
+
+    answer_text = response_body.get("completion")
+    print(answer_text)
+
+    return answer_text
+
 def handler(event,context):
     print(event)
     print(context)
@@ -196,11 +238,13 @@ def handler(event,context):
         user_input = MODE_LIST[MODE](user_input)
         embedding=generate_embedding(user_input)
         search_results = search_aoss(embeddings=embedding,search_size=search_size)
+        print(strip_knn_vector(search_results))
+        answer = best_answer(question=user_input,search_results=search_results)
 
         return {
             "statusCode":200,
             "headers": CORS_HEADERS,
-            "body": json.dumps({"Search response":strip_knn_vector(search_results)})
+            "body": json.dumps({"search_response":strip_knn_vector(search_results),"search_answer":answer})
         }
     except Exception as e:
         return {
