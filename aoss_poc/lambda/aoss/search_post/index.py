@@ -236,7 +236,7 @@ def create_index_search():
             },
             "mappings": {
                 "properties": {
-                    "content-vector": {
+                    "user-query-vector": {
                         "type": "knn_vector",
                         "dimension": EMBEDDING_SELECTION["dimensions"],
                         "method": {
@@ -253,8 +253,14 @@ def create_index_search():
                         "type": "text"
                     },
                     "similar-queries": {
-                        "type": "text"
+                        "type": "object"
                     },
+                    "search-results":{
+                        "type": "object"
+                    },
+                    "search-answer":{
+                        "type": "object"
+                    }
                 }
             }
         })
@@ -267,7 +273,7 @@ def find_nearest_query(user_input,embeddings):
         'size': 1,
         'query': {
             'knn': {
-                "content-vector": {
+                "user-query-vector": {
                     "vector": embeddings,
                     "k": 5
                 }
