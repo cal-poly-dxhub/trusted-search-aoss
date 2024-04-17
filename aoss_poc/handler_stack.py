@@ -243,7 +243,8 @@ class HandlerStack(Stack):
         invoke_search_handler = tasks.LambdaInvoke(self, "InvokeSearchHandler",
             lambda_function=fn_aoss_search_post,
             payload=stepfunctions.TaskInput.from_object({
-                "user_input": stepfunctions.JsonPath.string_at("$.user_input")
+                "user_input": stepfunctions.JsonPath.string_at("$.user_input"),
+                "search_size": stepfunctions.JsonPath.string_at("$.search_size"),
             }),
             result_path="$.search_results"
         )

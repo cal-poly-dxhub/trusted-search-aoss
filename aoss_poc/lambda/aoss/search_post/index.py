@@ -113,9 +113,9 @@ def strip_knn_vector(data):
     except:
         return data
     
-def search_aoss(embeddings):
+def search_aoss(embeddings,search_size):
     query = {
-        'size': 20,
+        'size': search_size,
         'query': {
             'knn': {
                 "content-vector": {
@@ -191,10 +191,11 @@ def handler(event,context):
             field_values=event
 
         user_input = field_values["user_input"]
+        search_size = field_values["search_size"]
 
         user_input = MODE_LIST[MODE](user_input)
         embedding=generate_embedding(user_input)
-        search_results = search_aoss(embeddings=embedding)
+        search_results = search_aoss(embeddings=embedding,search_size=search_size)
 
         return {
             "statusCode":200,

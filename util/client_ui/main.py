@@ -110,7 +110,7 @@ async def client_ui(api_endpoint):
 
 def main():
     # set for your query.
-    USER_INPUT="What’s in the Epstein documents?"
+    USER_INPUT="Home alone value"
 
 
     if( REST_X_API_KEY is None):
@@ -126,7 +126,8 @@ def main():
 
     # JSON payload
     payload = {
-        "user_input": USER_INPUT
+        "user_input": USER_INPUT,
+        "search_size": 1
     }
     # Send the POST request with JSON payload
     response = requests.post(BUILT_ENDPOINT, json=payload, headers=rest_headers)
