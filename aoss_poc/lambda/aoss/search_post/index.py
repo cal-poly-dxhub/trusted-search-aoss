@@ -115,11 +115,11 @@ def generate_embedding(text):
     embedding = bedrock_response_body.get("embedding")
     return embedding
 
-def strip_knn_vector(data):
+def strip_knn_vector(data,strip_field='content-vector'):
     try:
         rebuild = []
         for entry in data['hits']['hits']:
-            entry["_source"]["content-vector"]=[-1]
+            entry["_source"][strip_field]=[-1]
             rebuild.append(entry)
         data['hits']['hits'] = rebuild
         return data
@@ -301,7 +301,7 @@ def find_nearest_query(user_input,embeddings):
     print("Max_Score: ", max_score)
 
     print("~~~QUERY SEARCH RESULT~~~")
-    print(strip_knn_vector(response))
+    print(strip_knn_vector(response,strip_field="user-query-vector"))
     return {
         "hits":len(response['hits']['hits']),
         "max_score":max_score,
@@ -312,7 +312,7 @@ def insert_query_result( user_input, embedding, search_results, answer):
     document = {
         "user-query":user_input,
         "user-query-vector":embedding,
-        "search-results":strip_knn_vector(search_results),
+        "search-results":search_results,
         "search-answer":answer
     }
     print("Ingesting query: ",user_input)
@@ -321,7 +321,8 @@ def insert_query_result( user_input, embedding, search_results, answer):
         body = document
     )
     print(response)
-
+def insert_similar_query( nearest_query_result, user_input ):
+    doc_id=nearest_query_result["response"]["hits"]["hits"][0]["_source"]["_id"]
 
 def handler(event,context):
     print(event)
@@ -363,25 +364,28 @@ def handler(event,context):
         SIMILARITY_THRESHOLD=.85 #threshold to consider a query as something that was asked before
         if( nearest_query_result["hits"] == 0 or nearest_query_result["max_score"] < SIMILARITY_THRESHOLD):
             #new user search term, add to queries doc store
-            search_results = search_aoss(embeddings=embedding,search_size=search_size)
+            search_results = strip_knn_vector(search_aoss(embeddings=embedding,search_size=search_size))
             print("~~~DOC SEARCH RESULT~~~")
             print(strip_knn_vector(search_results))
             answer = best_answer(question=user_input,search_results=search_results)
             
             insert_query_result( user_input=user_input, embedding=embedding, search_results=search_results, answer=answer)
-        else: #hit on similar query
+        else: #hit on similar query; will always be a result of one (top) if we hit threshold
             # map
             print("!!!!!!!!!!!!!!!!!!! BYPASSED BEDROCK CALL !!!!!!!!!!!!!!!!!!!")
-            search_results = nearest_query_result["search-results"]
-            answer= nearest_query_result["search-answer"]
+            search_results = nearest_query_result["response"]["hits"]["hits"][0]["_source"]["search-results"]
+            answer= nearest_query_result["response"]["hits"]["hits"][0]["_source"]["search-answer"]
             # add to similar queries
-            # todo
-            pass       
+            if( nearest_query_result["max_score"]==1):
+                 print("!!!!!!!!!!!!!!!!!!! BYPASSED SIMILAR STATEMENT INSERT, EXACT MATCH !!!!!!!!!!!!!!!!!!!")
+            else:
+                insert_similar_query( nearest_query_result=nearest_query_result, user_input=user_input )
+
 
         return {
             "statusCode":200,
             "headers": CORS_HEADERS,
-            "body": json.dumps({"search_response":strip_knn_vector(search_results),"search_answer":answer})
+            "body": json.dumps({"search_response":search_results,"search_answer":answer})
         }
     except Exception as e:
         return {
