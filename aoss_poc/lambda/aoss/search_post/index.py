@@ -17,6 +17,7 @@ CORS_HEADERS = {
     'Access-Control-Allow-Methods': 'OPTIONS,POST,GET'
 }
 AOSS_ENDPOINT = os.environ["AOSS_ENDPOINT"]
+AOSS_SEARCHES_ENDPOINT = os.environ["AOSS_SEARCHES_ENDPOINT"]
 # paramaterize this in the future
 AOSS_INDEX="trusted"
 AOSS_SEARCH_INDEX="user_queries"
@@ -74,8 +75,18 @@ region = boto3.Session().region_name
 service = 'aoss'
 credentials = boto3.Session().get_credentials()
 awsauth = AWS4Auth(credentials.access_key, credentials.secret_key, region, service, session_token=credentials.token)
+
 host=AOSS_ENDPOINT.replace("https://", "")
 aoss_client = OpenSearch(
+    hosts=[{'host': host, 'port': 443}],
+    http_auth=awsauth,
+    use_ssl=True,
+    verify_certs=True,
+    connection_class=RequestsHttpConnection,
+    timeout=300
+)
+host=AOSS_SEARCHES_ENDPOINT.replace("https://", "")
+aoss_searches_client = OpenSearch(
     hosts=[{'host': host, 'port': 443}],
     http_auth=awsauth,
     use_ssl=True,
@@ -222,13 +233,13 @@ def best_answer(question, search_results):
     return answer_text
 
 def check_index_searches():
-    response = aoss_client.indices.exists(AOSS_SEARCH_INDEX)
+    response = aoss_searches_client.indices.exists(AOSS_SEARCH_INDEX)
     print('\Checking index:')
     print(response)
     return response
 
 def create_index_search():
-    response = aoss_client.indices.create(
+    response = aoss_searches_client.indices.create(
         AOSS_SEARCH_INDEX,
         body={
             "settings": {
@@ -259,7 +270,7 @@ def create_index_search():
                         "type": "object"
                     },
                     "search-answer":{
-                        "type": "object"
+                        "type": "text"
                     }
                 }
             }
@@ -281,7 +292,7 @@ def find_nearest_query(user_input,embeddings):
         }
     }    
     
-    response = aoss_client.search(
+    response = aoss_searches_client.search(
         body = query,
         index = AOSS_SEARCH_INDEX
     )
@@ -297,7 +308,21 @@ def find_nearest_query(user_input,embeddings):
         "response":response 
     }
            
-   
+def insert_query_result( user_input, embedding, search_results, answer):
+    document = {
+        "user-query":user_input,
+        "user-query-vector":embedding,
+        "search-results":strip_knn_vector(search_results),
+        "search-answer":answer
+    }
+    print("Ingesting query: ",user_input)
+    response = aoss_searches_client.index(
+        index=AOSS_SEARCH_INDEX,
+        body = document
+    )
+    print(response)
+
+
 def handler(event,context):
     print(event)
     print(context)
@@ -332,7 +357,8 @@ def handler(event,context):
                         raise ValueError("AOSS Index Creation error. Waited to long. Breaking loop.")
         except Exception as e:
             print("AOSS index creation error: " + str(e) )
-        nearest_query_result=find_nearest_query(user_input=user_input,embeddings=embedding,)
+
+        nearest_query_result=find_nearest_query(user_input=user_input,embeddings=embedding)
 
         SIMILARITY_THRESHOLD=.85 #threshold to consider a query as something that was asked before
         if( nearest_query_result["hits"] == 0 or nearest_query_result["max_score"] < SIMILARITY_THRESHOLD):
@@ -341,19 +367,16 @@ def handler(event,context):
             print("~~~DOC SEARCH RESULT~~~")
             print(strip_knn_vector(search_results))
             answer = best_answer(question=user_input,search_results=search_results)
-            pass
+            
+            insert_query_result( user_input=user_input, embedding=embedding, search_results=search_results, answer=answer)
         else: #hit on similar query
+            # map
+            print("!!!!!!!!!!!!!!!!!!! BYPASSED BEDROCK CALL !!!!!!!!!!!!!!!!!!!")
+            search_results = nearest_query_result["search-results"]
+            answer= nearest_query_result["search-answer"]
             # add to similar queries
-            # return similar query information
-            search_results = {}
-            answer= {}
+            # todo
             pass       
-
-        # no cache hits
-        search_results = search_aoss(embeddings=embedding,search_size=search_size)
-        print("~~~DOC SEARCH RESULT~~~")
-        print(strip_knn_vector(search_results))
-        answer = best_answer(question=user_input,search_results=search_results)
 
         return {
             "statusCode":200,

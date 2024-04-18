@@ -28,6 +28,7 @@ class HandlerStack(Stack):
                  construct_id: str,  
                  AOSS_ROLE:iam.Role, 
                  AOSS_ENDPOINT:str, 
+                 AOSS_SEARCHES_ENDPOINT:str,
                  ALLOW_LOCALHOST_ORIGIN:bool,
                  LAYER_NAME:str,
                  **kwargs) -> None:
@@ -124,6 +125,7 @@ class HandlerStack(Stack):
             code=lambda_.Code.from_asset(os.path.join("aoss_poc/lambda/testing","hello_get")),
             environment={
                 "AOSS_ENDPOINT": AOSS_ENDPOINT.value,
+                "AOSS_SEARCHES_ENDPOINT": AOSS_SEARCHES_ENDPOINT.value,
                 "LOCALHOST_ORIGIN":LOCALHOST_ORIGIN if ALLOW_LOCALHOST_ORIGIN else ""
             },
             layers=[LAMBDA_CUSTOM_LAYER ]
@@ -141,6 +143,7 @@ class HandlerStack(Stack):
             code=lambda_.Code.from_asset(os.path.join("aoss_poc/lambda/aoss","search_post")),
             environment={
                 "AOSS_ENDPOINT": AOSS_ENDPOINT.value,
+                "AOSS_SEARCHES_ENDPOINT": AOSS_SEARCHES_ENDPOINT.value,
                 "LOCALHOST_ORIGIN":LOCALHOST_ORIGIN if ALLOW_LOCALHOST_ORIGIN else "",
             },
             timeout=Duration.minutes(5),
@@ -159,6 +162,7 @@ class HandlerStack(Stack):
             code=lambda_.Code.from_asset(os.path.join("aoss_poc/lambda/aoss","ingest_handler")),
             environment={
                 "AOSS_ENDPOINT": AOSS_ENDPOINT.value,
+                "AOSS_SEARCHES_ENDPOINT": AOSS_SEARCHES_ENDPOINT.value,
                 "TABLE_NAME": dynamo_articles.table_name,
             },
             timeout=Duration.minutes(5),

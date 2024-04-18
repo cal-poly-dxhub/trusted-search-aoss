@@ -21,9 +21,11 @@ aoss_stack = AOSSVectorStack(app, "cdk-aoss-vector-stack",
 handler_stack = HandlerStack(app, "cdk-handler-stack", 
                        AOSS_ROLE=aoss_iam_stack.aoss_role,
                        AOSS_ENDPOINT=aoss_stack.aoss_endpoint,
+                       AOSS_SEARCHES_ENDPOINT=aoss_stack.aoss_searches_endpoint,
                        LAYER_NAME=LAYER_NAME,
                        ALLOW_LOCALHOST_ORIGIN=ALLOW_LOCALHOST_ORIGIN,
                        )
 handler_stack.add_dependency(aoss_layer_stack)
+handler_stack.add_dependency(aoss_stack)
 
 app.synth()
