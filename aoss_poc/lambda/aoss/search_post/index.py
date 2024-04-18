@@ -5,9 +5,11 @@ import os
 from requests_aws4auth import AWS4Auth
 from opensearchpy import OpenSearch, RequestsHttpConnection
 
-from string import Template
+from string import Template, ascii_letters, digits
 import time
 import hashlib
+import datetime
+import random
 
 
 # TODO -- Parameterize content vector
@@ -19,9 +21,11 @@ CORS_HEADERS = {
 }
 AOSS_ENDPOINT = os.environ["AOSS_ENDPOINT"]
 AOSS_SEARCHES_ENDPOINT = os.environ["AOSS_SEARCHES_ENDPOINT"]
+AOSS_MISSED_ENDPOINT = os.environ["AOSS_MISSED_ENDPOINT"]
 # paramaterize this in the future
 AOSS_INDEX="trusted"
 AOSS_SEARCH_INDEX="user_queries"
+AOSS_MISSED_INDEX="missed_queries"
 
 EMBEDDING_MODE="TITAN.TXT"
 # probably make this a shared python file so we don't duplicate code
@@ -88,6 +92,15 @@ aoss_client = OpenSearch(
 )
 host=AOSS_SEARCHES_ENDPOINT.replace("https://", "")
 aoss_searches_client = OpenSearch(
+    hosts=[{'host': host, 'port': 443}],
+    http_auth=awsauth,
+    use_ssl=True,
+    verify_certs=True,
+    connection_class=RequestsHttpConnection,
+    timeout=300
+)
+host=AOSS_MISSED_ENDPOINT.replace("https://", "")
+aoss_missed_client = OpenSearch(
     hosts=[{'host': host, 'port': 443}],
     http_auth=awsauth,
     use_ssl=True,
@@ -191,6 +204,76 @@ MODE_LIST = {
     }
 MODE="RAW"
 
+def generate_random_string(length):
+    """
+    Generate a random string of the specified length.
+    
+    Args:
+        length (int): The desired length of the random string.
+        
+    Returns:
+        str: A random string of the specified length.
+    """
+    # Define the characters to choose from
+    characters = ascii_letters + digits
+    
+    # Generate a random string by joining random characters
+    random_string = ''.join(random.choice(characters) for _ in range(length))
+    
+    return random_string
+
+
+def insert_missed(question):
+    try:
+        cis_exists=check_index_missed()
+        if( cis_exists==False):
+            create_index_missed()
+            wait_checks=0
+            wait_breaker=5
+            # Poll and wait for the index to be created (takes some time)
+            while not check_index_missed():
+                print(f"Missed index is not yet created. Waiting...")
+                time.sleep(5)  # Sleep for 5 seconds before checking again
+                wait_checks+=1
+                if wait_checks >= wait_breaker:
+                    raise ValueError("AOSS Index Creation error. Waited to long. Breaking loop.")
+    except Exception as e:
+        print("AOSS index creation error: " + str(e) )
+
+    RETRY_CAP=4
+    tries=0
+    while( tries < RETRY_CAP ):
+        try:
+            # Generate a timestamp for the current time
+            now = datetime.datetime.now(datetime.timezone.utc)
+            timestamp = now.isoformat()
+
+            uid = timestamp + question + generate_random_string(10)
+            # Create a SHA-256 hash object
+            sha256_hash = hashlib.sha256()
+            sha256_hash.update(uid.encode('utf-8'))
+            digest = sha256_hash.hexdigest()
+
+            document = {
+                "timestamp":timestamp,
+                "unique_id":digest,
+                "query":question,
+            }
+            print("Ingesting missed query: ",question)
+            response = aoss_missed_client.index(
+                index=AOSS_MISSED_INDEX,
+                body = document
+            )
+            break
+        except Exception as e:
+            print(str(e))
+            print("Sleeping, missed index has not reached consistency")
+            time.sleep(15)
+            tries+=1
+    if( tries == 3 ):
+        raise "Failed to insert missed"
+
+
 def best_answer(question, search_results):
     TEMPERATURE=0
     TOP_P=.9
@@ -204,8 +287,12 @@ def best_answer(question, search_results):
     data = merged_content
 
     prompt_string = """Human: You are to answer the question using the data in the following article.  Do not make up your answer, only use 
-    supporting data from the article, If you don't have enough data simply respond, I don't have enough information to answer that question. 
+    supporting data from the article.
+    
+    If you don't have enough data respond with exactly the following 'I don't have enough information to answer that question.'
+    
     Given the following news article data [ $data ] can you please give a concise answer to the following question. $question
+    
     Assistant:
     """
     template = Template(prompt_string)
@@ -230,14 +317,48 @@ def best_answer(question, search_results):
 
     answer_text = response_body.get("completion")
     print(answer_text)
-
-    return answer_text
+    if "I don't have enough information to answer that question." in answer_text:
+        #mismatch
+        print("++++++++++++RUNNING INSERT INTO MISSED ROUTINE++++++++++++")
+        insert_missed(question)
+        return (-1,answer_text)
+    else:
+        return (1,answer_text)
 
 def check_index_searches():
     response = aoss_searches_client.indices.exists(AOSS_SEARCH_INDEX)
     print('\Checking index:')
     print(response)
     return response
+
+def check_index_missed():
+    response = aoss_searches_client.indices.exists(AOSS_MISSED_INDEX)
+    print('\Checking index:')
+    print(response)
+    return response
+
+def create_index_missed():
+    response = aoss_searches_client.indices.create(
+        AOSS_MISSED_INDEX,
+        body={
+            "settings": {
+                "index.knn": True
+            },
+            "mappings": {
+                "properties": {
+                    "timestamp": {"type": "date"},
+                    "unique_id": {"type": "keyword"},
+                    "query": {"type": "text"}
+                }
+            }
+        })
+    
+    print('\nCreating index:')
+    print(response)
+
+
+
+
 
 def create_index_search():
     response = aoss_searches_client.indices.create(
@@ -413,9 +534,11 @@ def handler(event,context):
             search_results = strip_knn_vector(search_aoss(embeddings=embedding,search_size=search_size))
             print("~~~DOC SEARCH RESULT~~~")
             print(strip_knn_vector(search_results))
-            answer = best_answer(question=user_input,search_results=search_results)
-            
-            insert_query_result( user_input=user_input, embedding=embedding, search_results=search_results, answer=answer)
+            answer_result = best_answer(question=user_input,search_results=search_results)
+            found_match=answer_result[0]
+            answer=answer_result[1]
+            if( found_match == 1 ): # only insert for bypass if we get hits
+                insert_query_result( user_input=user_input, embedding=embedding, search_results=search_results, answer=answer)
         else: #hit on similar query; will always be a result of one (top) if we hit threshold
             # map
             print("!!!!!!!!!!!!!!!!!!! BYPASSED BEDROCK CALL !!!!!!!!!!!!!!!!!!!")

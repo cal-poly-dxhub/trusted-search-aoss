@@ -29,6 +29,7 @@ class HandlerStack(Stack):
                  AOSS_ROLE:iam.Role, 
                  AOSS_ENDPOINT:str, 
                  AOSS_SEARCHES_ENDPOINT:str,
+                 AOSS_MISSED_ENDPOINT:str,
                  ALLOW_LOCALHOST_ORIGIN:bool,
                  LAYER_NAME:str,
                  **kwargs) -> None:
@@ -126,6 +127,7 @@ class HandlerStack(Stack):
             environment={
                 "AOSS_ENDPOINT": AOSS_ENDPOINT.value,
                 "AOSS_SEARCHES_ENDPOINT": AOSS_SEARCHES_ENDPOINT.value,
+                "AOSS_MISSED_ENDPOINT": AOSS_MISSED_ENDPOINT.value,
                 "LOCALHOST_ORIGIN":LOCALHOST_ORIGIN if ALLOW_LOCALHOST_ORIGIN else ""
             },
             layers=[LAMBDA_CUSTOM_LAYER ]
@@ -144,6 +146,7 @@ class HandlerStack(Stack):
             environment={
                 "AOSS_ENDPOINT": AOSS_ENDPOINT.value,
                 "AOSS_SEARCHES_ENDPOINT": AOSS_SEARCHES_ENDPOINT.value,
+                "AOSS_MISSED_ENDPOINT": AOSS_MISSED_ENDPOINT.value,
                 "LOCALHOST_ORIGIN":LOCALHOST_ORIGIN if ALLOW_LOCALHOST_ORIGIN else "",
             },
             timeout=Duration.minutes(5),
@@ -163,6 +166,7 @@ class HandlerStack(Stack):
             environment={
                 "AOSS_ENDPOINT": AOSS_ENDPOINT.value,
                 "AOSS_SEARCHES_ENDPOINT": AOSS_SEARCHES_ENDPOINT.value,
+                "AOSS_MISSED_ENDPOINT": AOSS_MISSED_ENDPOINT.value,
                 "TABLE_NAME": dynamo_articles.table_name,
             },
             timeout=Duration.minutes(5),

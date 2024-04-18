@@ -22,6 +22,7 @@ handler_stack = HandlerStack(app, "cdk-handler-stack",
                        AOSS_ROLE=aoss_iam_stack.aoss_role,
                        AOSS_ENDPOINT=aoss_stack.aoss_endpoint,
                        AOSS_SEARCHES_ENDPOINT=aoss_stack.aoss_searches_endpoint,
+                       AOSS_MISSED_ENDPOINT=aoss_stack.aoss_missed_endpoint,
                        LAYER_NAME=LAYER_NAME,
                        ALLOW_LOCALHOST_ORIGIN=ALLOW_LOCALHOST_ORIGIN,
                        )

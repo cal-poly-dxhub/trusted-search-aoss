@@ -19,7 +19,7 @@ class AOSSVectorStack(Stack):
 
     collection_name = self.node.try_get_context('collection_name') or "articles"
     collection_searches_name = self.node.try_get_context('collection_searches_name') or "searches"
-
+    collection_missed_name = self.node.try_get_context('collection_misses_name') or "misses"
 
     network_security_policy = json.dumps([{
       "Rules": [
@@ -126,6 +126,57 @@ class AOSSVectorStack(Stack):
 
 
 
+    network_missed_security_policy = json.dumps([{
+      "Rules": [
+        {
+          "Resource": [
+            f"collection/{collection_missed_name}"
+          ],
+          "ResourceType": "dashboard"
+        },
+        {
+          "Resource": [
+            f"collection/{collection_missed_name}"
+          ],
+          "ResourceType": "collection"
+        }
+      ],
+      "AllowFromPublic": True
+    }], indent=2)
+
+    cfn_network_missed_security_policy = aws_opss.CfnSecurityPolicy(self, "NetworkMissedSecurityPolicy",
+      policy=network_missed_security_policy,
+      name=f"{collection_missed_name}-security-policy",
+      type="network"
+    )
+
+    encryption_missed_security_policy = json.dumps({
+      "Rules": [
+        {
+          "Resource": [
+            f"collection/{collection_missed_name}"
+          ],
+          "ResourceType": "collection"
+        }
+      ],
+      "AWSOwnedKey": True
+    }, indent=2)
+
+    cfn_encryption_missed_security_policy = aws_opss.CfnSecurityPolicy(self, "EncryptionMissedSecurityPolicy",
+      policy=encryption_missed_security_policy,
+      name=f"{collection_missed_name}-security-policy",
+      type="encryption"
+    )
+
+    cfn_missed_collection = aws_opss.CfnCollection(self, "missed",
+      name=collection_missed_name,
+      description="Collection to be used for missed to support caching and metrics",
+      type="TIMESERIES" # [SEARCH, TIMESERIES]
+    )
+    cfn_missed_collection.add_dependency(cfn_network_missed_security_policy)
+    cfn_missed_collection.add_dependency(cfn_encryption_missed_security_policy)
+    
+
 
 
     
@@ -226,8 +277,61 @@ class AOSSVectorStack(Stack):
     )
 
 
+
+
+    data_missed_access_policy = json.dumps([
+      {
+        "Rules": [
+          {
+            "Resource": [
+              f"collection/{collection_missed_name}"
+            ],
+            "Permission": [
+              "aoss:CreateCollectionItems",
+              "aoss:DeleteCollectionItems",
+              "aoss:UpdateCollectionItems",
+              "aoss:DescribeCollectionItems"
+            ],
+            "ResourceType": "collection"
+          },
+          {
+            "Resource": [
+              f"index/{collection_missed_name}/*"
+            ],
+            "Permission": [
+              "aoss:CreateIndex",
+              "aoss:DeleteIndex",
+              "aoss:UpdateIndex",
+              "aoss:DescribeIndex",
+              "aoss:ReadDocument",
+              "aoss:WriteDocument"
+            ],
+            "ResourceType": "index"
+          }
+        ],
+        "Principal": [
+          f"{AOSS_ROLE.role_arn}"
+        ],
+        "Description": "data-access-rule"
+      }
+    ], indent=2)
+
+    #XXX: max length of policy name is 32
+    data_access_missed_policy_name = f"{collection_missed_name}-policy"
+    assert len(data_access_missed_policy_name) <= 32
+
+    cfn_access_policy = aws_opss.CfnAccessPolicy(self, "OpssMissedDataAccessPolicy",
+      name=data_access_missed_policy_name,
+      description="Policy for data access",
+      policy=data_missed_access_policy,
+      type="data"
+    )
+
+
     self.aoss_endpoint = cdk.CfnOutput(self, f'{self.stack_name}-Endpoint', value=cfn_collection.attr_collection_endpoint)
     self.aoss_searches_endpoint = cdk.CfnOutput(self, f'{self.stack_name}-searches-Endpoint', value=cfn_searches_collection.attr_collection_endpoint)
+    self.aoss_missed_endpoint = cdk.CfnOutput(self, f'{self.stack_name}-missed-Endpoint', value=cfn_missed_collection.attr_collection_endpoint)
+
 
     # Not supported with AOSS
     # cdk.CfnOutput(self, f'{self.stack_name}-DashboardsURL', value=cfn_collection.attr_dashboard_endpoint)
