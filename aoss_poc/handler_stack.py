@@ -438,6 +438,13 @@ class HandlerStack(Stack):
            ),
            usage_plan_name="WebsocketUsagePlan"
         )
+        # Find the underlying CfnResource for the WebSocketApi
+        cfn_websocket_api = websocket_api.node.default_child
+        cfn_usage_plan.node.add_dependency(cfn_websocket_api)
+
+        # Find the underlying CfnResource for the WebSocketStage
+        cfn_websocket_stage = websocket_api_stage.node.default_child
+        cfn_usage_plan.node.add_dependency(cfn_websocket_stage)
 
         cfn_api_key = apigateway.CfnApiKey(self, "WebSocketApiKey",
                description="Key for websocket connections",
