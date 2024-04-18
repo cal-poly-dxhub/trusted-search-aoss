@@ -110,7 +110,7 @@ async def client_ui(api_endpoint):
 
 def main():
     # set for your query.
-    USER_INPUT="Where home alone house?"
+    USER_INPUT="Where is home alone house?"
 
 
     if( REST_X_API_KEY is None):

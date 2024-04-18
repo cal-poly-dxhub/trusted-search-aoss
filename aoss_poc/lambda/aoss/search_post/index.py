@@ -7,6 +7,7 @@ from opensearchpy import OpenSearch, RequestsHttpConnection
 
 from string import Template
 import time
+import hashlib
 
 
 # TODO -- Parameterize content vector
@@ -280,6 +281,8 @@ def create_index_search():
     print(response)
 
 def find_nearest_query(user_input,embeddings):
+    # can probably add in a correct routine here when you get two hits and remap these docs
+    # into a single doc
     query = {
         'size': 1,
         'query': {
@@ -312,6 +315,7 @@ def insert_query_result( user_input, embedding, search_results, answer):
     document = {
         "user-query":user_input,
         "user-query-vector":embedding,
+        "similar-queries":{},
         "search-results":search_results,
         "search-answer":answer
     }
@@ -321,8 +325,38 @@ def insert_query_result( user_input, embedding, search_results, answer):
         body = document
     )
     print(response)
+
 def insert_similar_query( nearest_query_result, user_input ):
-    doc_id=nearest_query_result["response"]["hits"]["hits"][0]["_source"]["_id"]
+    doc_id=nearest_query_result["response"]["hits"]["hits"][0]["_id"]
+    similar_queries=nearest_query_result["response"]["hits"]["hits"][0]["_source"]["similar-queries"]
+
+    try:
+        # Create a SHA-256 hash object
+        sha256_hash = hashlib.sha256()
+        sha256_hash.update(user_input.encode('utf-8'))
+        digest = sha256_hash.hexdigest()
+
+        print(f"SHA-256 hash of '{user_input}' is: {digest}")
+        similar_queries[digest] = user_input
+    except Exception as e:
+        print(str(e))
+
+    update_data = {
+        "doc": {
+            "similar-queries":similar_queries
+        }
+    }
+
+    print(doc_id)
+    print(similar_queries)
+    print(update_data)
+
+    response = aoss_searches_client.update(
+            index = AOSS_SEARCH_INDEX,
+            body = update_data,
+            id=doc_id
+    )
+    print(response)
 
 def handler(event,context):
     print(event)
