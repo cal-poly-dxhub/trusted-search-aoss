@@ -393,7 +393,19 @@ def handler(event,context):
         except Exception as e:
             print("AOSS index creation error: " + str(e) )
 
-        nearest_query_result=find_nearest_query(user_input=user_input,embeddings=embedding)
+        RETRY_CAP=4
+        tries=0
+        while( tries < RETRY_CAP ):
+            try:
+                nearest_query_result=find_nearest_query(user_input=user_input,embeddings=embedding)
+                break
+            except Exception as e:
+                print(str(e))
+                print("Sleeping, index has not reached consistency")
+                time.sleep(15)
+                tries+=1
+        if( tries == 3 ):
+            raise "Failed to query"
 
         SIMILARITY_THRESHOLD=.85 #threshold to consider a query as something that was asked before
         if( nearest_query_result["hits"] == 0 or nearest_query_result["max_score"] < SIMILARITY_THRESHOLD):
