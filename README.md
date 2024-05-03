@@ -1,3 +1,26 @@
+# NOTICE
+Customers are responsible for making their own independent assessment of the information in this document.
+
+This document:
+
+1) is for informational purposes only,
+
+2) represents current AWS product offerings and practices, which are subject to change without notice, and
+
+3) does not create any commitments or assurances from AWS and its affiliates, suppliers or licensors. AWS products or services are provided "as is" without warranties, representations, or conditions of any kind, whether express or implied. The responsibilities and liabilities of AWS to its customers are controlled by AWS agreements, and this document is not part of, nor does it modify, any agreement between AWS and its customers.
+
+4) is not to be considered a recommendation or viewpoint of AWS
+
+Additionally, all prototype code and associated assets should be considered:
+
+(a) as-is and without warranties
+
+(b) not suitable for production environments
+
+(d) to include shortcuts in order to support rapid prototyping such as, but not limitted to, relaxed authentication and authorization processes
+
+All work produced is open source. More information can be found in the GitHub repo.
+
 # AOSS POC
 
 0) Setup your environment for python CDK deploy (venv & installing requirements.txt) and setup your layers (check aoss_poc/lambda/custom_packages/src/README.md)
@@ -44,9 +67,12 @@ Splits a json file int he format of
 ```
 into smaller chunk files (default 3).  This is useful to avoid lambda timeouts, and process ingest faster.
 
-2) client_ui
+2) client_ui & alternate query client
 
 This "simulates" a client ui.  It calls search asynchronously and establishes a websocket -- receives response back via websocket once processing completed on backend.
+
+Alternate query program was used in testing PG Vector compared with OpenSearch and was also used to experiment with different LLMs.  You'll find code examples
+of how to conect with different LLMs and uses LangChain with messages format.
 
 # Important Security Note
 This needs a strong rewrite of CDK to reduce permission scopes. This is for rapid development prototyping only.
