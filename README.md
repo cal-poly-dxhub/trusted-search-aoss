@@ -1,17 +1,18 @@
-# NOTICE
-Customers are responsible for making their own independent assessment of the information in this document.
+# Disclaimers
 
-This document:
+**Customers are responsible for making their own independent assessment of the information in this document.**
 
-1) is for informational purposes only,
+**This document:**
 
-2) represents current AWS product offerings and practices, which are subject to change without notice, and
+(a) is for informational purposes only, 
 
-3) does not create any commitments or assurances from AWS and its affiliates, suppliers or licensors. AWS products or services are provided "as is" without warranties, representations, or conditions of any kind, whether express or implied. The responsibilities and liabilities of AWS to its customers are controlled by AWS agreements, and this document is not part of, nor does it modify, any agreement between AWS and its customers.
+(b) represents current AWS product offerings and practices, which are subject to change without notice, and 
 
-4) is not to be considered a recommendation or viewpoint of AWS
+(c) does not create any commitments or assurances from AWS and its affiliates, suppliers or licensors. AWS products or services are provided “as is” without warranties, representations, or conditions of any kind, whether express or implied. The responsibilities and liabilities of AWS to its customers are controlled by AWS agreements, and this document is not part of, nor does it modify, any agreement between AWS and its customers. 
 
-Additionally, all prototype code and associated assets should be considered:
+(d) is not to be considered a recommendation or viewpoint of AWS
+
+**Additionally, all prototype code and associated assets should be considered:**
 
 (a) as-is and without warranties
 
@@ -19,7 +20,8 @@ Additionally, all prototype code and associated assets should be considered:
 
 (d) to include shortcuts in order to support rapid prototyping such as, but not limitted to, relaxed authentication and authorization processes
 
-All work produced is open source. More information can be found in the GitHub repo.
+**All work produced is open source. More information can be found in the GitHub repo.**
+
 
 # AOSS POC
 
