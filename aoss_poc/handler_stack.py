@@ -28,6 +28,8 @@ class HandlerStack(Stack):
                  construct_id: str,  
                  AOSS_ROLE:iam.Role, 
                  AOSS_ENDPOINT:str, 
+                 AOSS_SEARCHES_ENDPOINT:str,
+                 AOSS_MISSED_ENDPOINT:str,
                  ALLOW_LOCALHOST_ORIGIN:bool,
                  LAYER_NAME:str,
                  **kwargs) -> None:
@@ -124,6 +126,8 @@ class HandlerStack(Stack):
             code=lambda_.Code.from_asset(os.path.join("aoss_poc/lambda/testing","hello_get")),
             environment={
                 "AOSS_ENDPOINT": AOSS_ENDPOINT.value,
+                "AOSS_SEARCHES_ENDPOINT": AOSS_SEARCHES_ENDPOINT.value,
+                "AOSS_MISSED_ENDPOINT": AOSS_MISSED_ENDPOINT.value,
                 "LOCALHOST_ORIGIN":LOCALHOST_ORIGIN if ALLOW_LOCALHOST_ORIGIN else ""
             },
             layers=[LAMBDA_CUSTOM_LAYER ]
@@ -141,6 +145,8 @@ class HandlerStack(Stack):
             code=lambda_.Code.from_asset(os.path.join("aoss_poc/lambda/aoss","search_post")),
             environment={
                 "AOSS_ENDPOINT": AOSS_ENDPOINT.value,
+                "AOSS_SEARCHES_ENDPOINT": AOSS_SEARCHES_ENDPOINT.value,
+                "AOSS_MISSED_ENDPOINT": AOSS_MISSED_ENDPOINT.value,
                 "LOCALHOST_ORIGIN":LOCALHOST_ORIGIN if ALLOW_LOCALHOST_ORIGIN else "",
             },
             timeout=Duration.minutes(5),
@@ -159,6 +165,8 @@ class HandlerStack(Stack):
             code=lambda_.Code.from_asset(os.path.join("aoss_poc/lambda/aoss","ingest_handler")),
             environment={
                 "AOSS_ENDPOINT": AOSS_ENDPOINT.value,
+                "AOSS_SEARCHES_ENDPOINT": AOSS_SEARCHES_ENDPOINT.value,
+                "AOSS_MISSED_ENDPOINT": AOSS_MISSED_ENDPOINT.value,
                 "TABLE_NAME": dynamo_articles.table_name,
             },
             timeout=Duration.minutes(5),
@@ -434,6 +442,13 @@ class HandlerStack(Stack):
            ),
            usage_plan_name="WebsocketUsagePlan"
         )
+        # Find the underlying CfnResource for the WebSocketApi
+        cfn_websocket_api = websocket_api.node.default_child
+        cfn_usage_plan.node.add_dependency(cfn_websocket_api)
+
+        # Find the underlying CfnResource for the WebSocketStage
+        cfn_websocket_stage = websocket_api_stage.node.default_child
+        cfn_usage_plan.node.add_dependency(cfn_websocket_stage)
 
         cfn_api_key = apigateway.CfnApiKey(self, "WebSocketApiKey",
                description="Key for websocket connections",

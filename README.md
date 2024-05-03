@@ -57,6 +57,59 @@ Amazon OpenSearch Service>Serverless: Dashboard
 1) Can set OU max to 2 index/2 search for prototyping purposes
 2) To use dashboard, go to Data access policies>articles-policy and add your console role to the principals
 
+# Useful AOSS Queries
+Grab all doc
+```
+GET _search
+{
+  "query": {
+    "match_all": {}
+  }
+}
+```
+
+Get Timeseries Aggregates (Missed) top 10
+```
+GET _search
+{
+  "size": 0,
+  "query": {
+    "match_all": {}
+  },
+  "aggs": {
+    "top_queries": {
+      "terms": {
+        "field": "query.keyword",
+        "size": 10,
+        "order": {
+          "_count": "desc"
+        }
+      },
+      "aggs": {
+        "doc_count": {
+          "value_count": {
+            "field": "_id"
+          }
+        },
+        "top_query_hits": {
+          "top_hits": {
+            "size": 1,
+            "_source": {
+              "includes": [
+                "query"
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+
+
+
 # CDK Setup & Deploy
 
 You should explore the contents of this project. It demonstrates a CDK app with an instance of a stack (`aoss_poc_stack`)
