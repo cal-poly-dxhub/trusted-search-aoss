@@ -58,12 +58,14 @@ BEDROCK_MODE="CLAUDE.TXT"
 # probably make this a shared python file so we don't duplicate code
 BEDROCK_CONFIGURATION = {
     "CLAUDE.TXT": {
-        "model_id":"anthropic.claude-v2",
+        "model_id":"anthropic.claude-3-haiku-20240307-v1:0",
         "content_type":"application/json",
         "accept":"*/*",
         "payload":{
-            "prompt":"",
-            "max_tokens_to_sample":0,
+            "anthropic_version": "bedrock-2023-05-31",
+            "messages":[],
+            "system":"",
+            "max_tokens":0,
             "temperature":0,
             "top_p":0,
             "top_k":0,
@@ -286,27 +288,32 @@ def best_answer(question, search_results):
             merged_content += source['content-raw-cleaned'] + '\n'
     data = merged_content
 
-    prompt_string = """Human: You are to answer the question using the data in the following article.  Do not make up your answer, only use 
-    supporting data from the article.
+    system_prompt = "You are a helpful assistant that can answer quesitons based on news articles you have been given."
+    prompt_string = """You are to answer the question using the data in the following article.  Do not make up your answer, only use supporting 
+    data from the article.
     
-    If you don't have enough data respond with exactly the following 'I don't have enough information to answer that question.'
+    If you don't have enough data simply respond, 'I don't have enough information to answer that question.' 
     
-    Given the following news article data [ $data ] can you please give a concise answer to the following question. $question
+    Given the following news article data [ $data ] can you please give a concise answer to the following question. [ $question ]"""
     
-    Assistant:
-    """
     template = Template(prompt_string)
     prompt = template.substitute(data=data,question=question)
 
     # print(prompt)
-
-    BEDROCK_SELECTION["payload"]["prompt"] = prompt
+    msg = [ 
+        {
+            "role":"user",
+            "content":prompt
+        }
+    ]
+    BEDROCK_SELECTION["payload"]["messages"] = msg
+    BEDROCK_SELECTION["payload"]["system"] = system_prompt
     BEDROCK_SELECTION["payload"]["temperature"] = TEMPERATURE
     BEDROCK_SELECTION["payload"]["top_k"] = TOP_K
     BEDROCK_SELECTION["payload"]["top_p"] = TOP_P
-    BEDROCK_SELECTION["payload"]["max_tokens_to_sample"] = MAX_TOKENS_TO_SAMPLE
+    BEDROCK_SELECTION["payload"]["max_tokens"] = MAX_TOKENS_TO_SAMPLE
     body = json.dumps(BEDROCK_SELECTION["payload"])
-
+    print(body)
     response = bedrock_client.invoke_model(
         body=body, 
         modelId=BEDROCK_SELECTION["model_id"], 
@@ -314,8 +321,8 @@ def best_answer(question, search_results):
         contentType=BEDROCK_SELECTION["content_type"]
     )
     response_body = json.loads(response.get('body').read())
-
-    answer_text = response_body.get("completion")
+    print(response_body)
+    answer_text = response_body["content"][0]["text"]
     print(answer_text)
     if "I don't have enough information to answer that question." in answer_text:
         #mismatch
