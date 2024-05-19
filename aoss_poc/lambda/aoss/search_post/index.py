@@ -11,6 +11,7 @@ import hashlib
 import datetime
 import random
 
+import numpy as np
 
 # TODO -- Parameterize content vector
 
@@ -282,6 +283,51 @@ def insert_missed(question):
         raise "Failed to insert missed"
 
 
+def calculate_zscores(cosine_scores):
+    zscores = []
+    # Calculate the mean of the sample points
+    mean = np.mean(cosine_scores)
+    # Calculate the standard deviation of the sample points
+    std_deviation = np.std(cosine_scores, ddof=1)  # ddof=1 for sample standard deviation
+    # Calculate the z-scores for each sample point
+    z_scores = [(x - mean) / std_deviation for x in cosine_scores]
+
+    return z_scores
+
+
+def zscore_reduction(search_results):
+    cosine_scores=[]
+    for hit in search_results['hits']['hits']:
+        cosine_scores.append(hit['_score'])
+
+    z_scores = calculate_zscores(cosine_scores)
+
+    # inject z_score back into search_results
+    for idx, z in enumerate(z_scores):
+        search_results['hits']['hits'][idx]['_zscore']=z
+
+
+    print("~~~~~~~~~~~~~~BEFORE REDUCTION~~~~~~~~~~~~~~~~~~~")
+    print("LEN: ", len(search_results['hits']['hits']))
+    for hit in search_results['hits']['hits']:
+        print(str(hit['_score']) + " | " + str(hit['_zscore']))
+
+    zscore_index = 0
+    first_z_score = z_scores[0]
+    reducer = []
+    for hit in search_results['hits']['hits']:
+        if(first_z_score/2)<z_scores[zscore_index]:
+            reducer.append(hit)
+        zscore_index += 1
+    search_results['hits']['hits']=reducer
+
+    print("~~~~~~~~~~~~~~POST REDUCTION~~~~~~~~~~~~~~~~~~~")
+    print("LEN: ", len(search_results['hits']['hits']))
+    for hit in search_results['hits']['hits']:
+        print(str(hit['_score']) + " | " + str(hit['_zscore']))
+
+    return search_results
+
 def best_answer(question, search_results):
     TEMPERATURE=0
     TOP_P=.9
@@ -547,6 +593,10 @@ def handler(event,context):
             search_results = strip_knn_vector(search_aoss(embeddings=embedding,search_size=search_size))
             print("~~~DOC SEARCH RESULT~~~")
             print(strip_knn_vector(search_results))
+
+            # logic to reduce base payload in accordance to z-scoring
+            search_results = zscore_reduction(search_results=search_results)
+
             answer_result = best_answer(question=user_input,search_results=search_results)
             found_match=answer_result[0]
             answer=answer_result[1]

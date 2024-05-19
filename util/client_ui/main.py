@@ -127,7 +127,7 @@ def main():
     # JSON payload
     payload = {
         "user_input": USER_INPUT,
-        "search_size": 3
+        "search_size": 10
     }
     # Send the POST request with JSON payload
     response = requests.post(BUILT_ENDPOINT, json=payload, headers=rest_headers)

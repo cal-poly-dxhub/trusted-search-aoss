@@ -14,14 +14,17 @@ cd python
 
 `pip install requests-aws4auth opensearch-py boto3 botocore -t .`
 
-3) Output should be nested in a folder called python
+3) Numpy is unique and takes a little more work to get the appropriate layer:
+https://docs.aws.amazon.com/lambda/latest/dg/python-layers.html#python-layer-manylinux
 
-4) python folder should be zipped and called aoss_poc.zip
+4) Output of step 2 and step 3 should be nested in a folder called python. Note, your target of `cp -r create_layer/lib python/` from step 3 should be the same python folder you are nesting on.
+
+5) python folder should be zipped and called aoss_poc.zip
 ```
 cd ..
 zip -r aoss_poc.zip python
 ```
-5) zip file should be moved ../layers/
+6) zip file should be moved ../layers/
 
  `mv aoss_poc.zip ../layers/.`
 
