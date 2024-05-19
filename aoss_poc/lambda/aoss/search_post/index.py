@@ -167,19 +167,25 @@ def hyde(user_input):
     MAX_TOKENS_TO_SAMPLE=512
     TOP_K=250
 
-    prompt_string = """Human: Generate a ficticious article that answers the following user prompt: $user_input
+    system_prompt = """Human: Generate a ficticious article that answers the following user prompt: $user_input
     Assistant:
     """
-    template = Template(prompt_string)
+    template = Template(system_prompt)
     prompt = template.substitute(user_input=user_input)
 
-    print(prompt)
-
-    BEDROCK_SELECTION["payload"]["prompt"] = prompt
+    # print(prompt)
+    msg = [ 
+        {
+            "role":"user",
+            "content":prompt
+        }
+    ]
+    BEDROCK_SELECTION["payload"]["messages"] = msg
+    BEDROCK_SELECTION["payload"]["system"] = system_prompt
     BEDROCK_SELECTION["payload"]["temperature"] = TEMPERATURE
     BEDROCK_SELECTION["payload"]["top_k"] = TOP_K
     BEDROCK_SELECTION["payload"]["top_p"] = TOP_P
-    BEDROCK_SELECTION["payload"]["max_tokens_to_sample"] = MAX_TOKENS_TO_SAMPLE
+    BEDROCK_SELECTION["payload"]["max_tokens"] = MAX_TOKENS_TO_SAMPLE
     body = json.dumps(BEDROCK_SELECTION["payload"])
 
     response = bedrock_client.invoke_model(
