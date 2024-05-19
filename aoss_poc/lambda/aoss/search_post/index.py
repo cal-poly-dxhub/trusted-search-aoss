@@ -76,6 +76,17 @@ BEDROCK_CONFIGURATION = {
 }
 BEDROCK_SELECTION=BEDROCK_CONFIGURATION[BEDROCK_MODE]
 
+#####################################################################
+# streaming add-in
+TABLE_NAME = os.environ["TABLE_NAME"]
+
+ENDPOINT_URL = os.environ["ENDPOINT_URL"]
+ENDPOINT_URL=ENDPOINT_URL.replace("wss://", "https://") + "/prod"
+dynamodb_resource = boto3.resource('dynamodb')
+connections_table = dynamodb_resource.Table(TABLE_NAME)
+#####################################################################
+
+apigateway = boto3.client('apigatewaymanagementapi',endpoint_url=ENDPOINT_URL)
 
 bedrock_client = boto3.client(service_name="bedrock-runtime")
 
@@ -328,11 +339,37 @@ def zscore_reduction(search_results):
 
     return search_results
 
-def best_answer(question, search_results):
+def best_answer(question, search_results, execution_arn):
     TEMPERATURE=0
     TOP_P=.9
     MAX_TOKENS_TO_SAMPLE=2048
     TOP_K=250
+
+
+    ############################################# STREAMING THROW IN ##############################
+    doc_key = {
+            'execution_arn':execution_arn,
+    }
+    dynamodb_response = connections_table.get_item(Key=doc_key,ConsistentRead=True)
+    connect_id = dynamodb_response.get('Item', {}).get('connect_id')
+    print("~~~~connect_id~~~~")
+    print(connect_id)
+
+    # Dirty "Hack" to fix race condition of workflow getting to this point before client updates
+    # the dynamodb conneciton value. This needs fixed and cleaned for production.
+    waiter = 1
+    while( len(connect_id) < 1 ):
+        print("~~~~waiting for ",str(waiter),"s~~~~")
+        time.sleep(waiter)
+        dynamodb_response = connections_table.get_item(Key=doc_key,ConsistentRead=True)
+        connect_id = dynamodb_response.get('Item', {}).get('connect_id')
+        print("~~~~connect_id~~~~")
+        print(connect_id)
+        waiter+=2
+        if( waiter > 5 ):
+            raise Exception("ConnID Wait Threshold reached") 
+    ############################################# STREAMING THROW IN ##############################
+
     merged_content = ''
     for hit in search_results['hits']['hits']:
         source = hit['_source']
@@ -366,15 +403,36 @@ def best_answer(question, search_results):
     BEDROCK_SELECTION["payload"]["max_tokens"] = MAX_TOKENS_TO_SAMPLE
     body = json.dumps(BEDROCK_SELECTION["payload"])
     print(body)
-    response = bedrock_client.invoke_model(
+    response = bedrock_client.invoke_model_with_response_stream(
         body=body, 
         modelId=BEDROCK_SELECTION["model_id"], 
         accept=BEDROCK_SELECTION["accept"], 
         contentType=BEDROCK_SELECTION["content_type"]
     )
-    response_body = json.loads(response.get('body').read())
-    print(response_body)
-    answer_text = response_body["content"][0]["text"]
+    event_stream = response.get('body', {})
+    answer_chunks=""
+    for event in event_stream:
+        chunk = event.get('chunk')
+        if chunk:
+            message = json.loads(chunk.get("bytes").decode())
+            if message['type'] == "content_block_delta":
+                chunk_string = message['delta']['text'] or ""
+                answer_chunks+=chunk_string
+                apigateway.post_to_connection(
+                    Data=chunk_string,
+                    ConnectionId=connect_id
+                )
+            elif message['type'] == "message_stop":
+                apigateway.post_to_connection(
+                    Data="\n",
+                    ConnectionId=connect_id
+                )
+                return
+            
+
+    #response_body = json.loads(response.get('body').read())
+    #print(response_body)
+    answer_text =answer_chunks
     print(answer_text)
     if "I don't have enough information to answer that question." in answer_text:
         #mismatch
@@ -542,6 +600,9 @@ def handler(event,context):
     print(event)
     print(context)
 
+
+    execution_arn=event["execution_arn"]
+
     # Patch to support parallel testing of synchronous api gateway call and
     # new async route with step functions
     try:
@@ -597,7 +658,7 @@ def handler(event,context):
             # logic to reduce base payload in accordance to z-scoring
             search_results = zscore_reduction(search_results=search_results)
 
-            answer_result = best_answer(question=user_input,search_results=search_results)
+            answer_result = best_answer(question=user_input,search_results=search_results,execution_arn=execution_arn)
             found_match=answer_result[0]
             answer=answer_result[1]
             if( found_match == 1 ): # only insert for bypass if we get hits

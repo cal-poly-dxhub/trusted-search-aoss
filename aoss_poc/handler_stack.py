@@ -133,25 +133,7 @@ class HandlerStack(Stack):
             layers=[LAMBDA_CUSTOM_LAYER ]
         )
 
-        #################################################################################
-        # AOSS Search Functionality
-        #################################################################################
-        fn_aoss_search_post = lambda_.Function(
-            self,"fn-aoss-search-post",
-            description="aoss-search-post", #microservice tag
-            runtime=lambda_.Runtime.PYTHON_3_11,
-            handler="index.handler",
-            role=AOSS_ROLE,
-            code=lambda_.Code.from_asset(os.path.join("aoss_poc/lambda/aoss","search_post")),
-            environment={
-                "AOSS_ENDPOINT": AOSS_ENDPOINT.value,
-                "AOSS_SEARCHES_ENDPOINT": AOSS_SEARCHES_ENDPOINT.value,
-                "AOSS_MISSED_ENDPOINT": AOSS_MISSED_ENDPOINT.value,
-                "LOCALHOST_ORIGIN":LOCALHOST_ORIGIN if ALLOW_LOCALHOST_ORIGIN else "",
-            },
-            timeout=Duration.minutes(5),
-            layers=[ LAMBDA_CUSTOM_LAYER ]
-        )
+
 
         #################################################################################
         # AOSS Ingest Lambda
@@ -228,6 +210,28 @@ class HandlerStack(Stack):
         #)
 
         #################################################################################
+        # AOSS Search Functionality
+        #################################################################################
+        fn_aoss_search_post = lambda_.Function(
+            self,"fn-aoss-search-post",
+            description="aoss-search-post", #microservice tag
+            runtime=lambda_.Runtime.PYTHON_3_11,
+            handler="index.handler",
+            role=AOSS_ROLE,
+            code=lambda_.Code.from_asset(os.path.join("aoss_poc/lambda/aoss","search_post")),
+            environment={
+                "AOSS_ENDPOINT": AOSS_ENDPOINT.value,
+                "AOSS_SEARCHES_ENDPOINT": AOSS_SEARCHES_ENDPOINT.value,
+                "AOSS_MISSED_ENDPOINT": AOSS_MISSED_ENDPOINT.value,
+                "LOCALHOST_ORIGIN":LOCALHOST_ORIGIN if ALLOW_LOCALHOST_ORIGIN else "",
+                "TABLE_NAME": dynamo_connections.table_name,
+                "ENDPOINT_URL": websocket_api.api_endpoint
+            },
+            timeout=Duration.minutes(5),
+            layers=[ LAMBDA_CUSTOM_LAYER ]
+        )
+
+        #################################################################################
         # Async Issue Callback
         #################################################################################        
         fn_callback_handler = lambda_.Function(
@@ -251,6 +255,7 @@ class HandlerStack(Stack):
         invoke_search_handler = tasks.LambdaInvoke(self, "InvokeSearchHandler",
             lambda_function=fn_aoss_search_post,
             payload=stepfunctions.TaskInput.from_object({
+                "execution_arn":  stepfunctions.JsonPath.execution_id,
                 "user_input": stepfunctions.JsonPath.string_at("$.user_input"),
                 "search_size": stepfunctions.JsonPath.string_at("$.search_size"),
             }),

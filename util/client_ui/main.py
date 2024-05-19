@@ -83,6 +83,7 @@ async def client_ui(api_endpoint):
     async def open_connection():
         # Create a WebSocket connection
         async with websockets.connect(api_endpoint, extra_headers=websocket_headers) as websocket:
+            '''
             try:
                 # Wait for a message from the server
                 spin = asyncio.Task(spinner())
@@ -97,6 +98,23 @@ async def client_ui(api_endpoint):
                 print("====================================")
                 print(json_formatted_str)
                 #print(f"Received message: {message}")
+            '''
+            message=''
+            try:
+                while(message != '\n'):
+                    message = await websocket.recv()
+                    print(message, end='')
+                '''
+                message = await websocket.recv() # wait for the last payload (results)
+                json_object  = json.loads(message)
+                json_object["Payload"]["body"] = json.loads(json_object["Payload"]["body"])
+                json_formatted_str = json.dumps(json_object, indent=2)
+                print("\n\n====================================")
+                print("          RECEIVED PAYLOAD          ")
+                print("====================================")
+                print(json_formatted_str)
+                #print(f"Received message: {message}")
+                '''
             except Exception as e:
                 print("\n\n====================================")
                 print(f"An error occurred: {e}")
