@@ -101,9 +101,20 @@ async def client_ui(api_endpoint):
             '''
             message=''
             try:
-                while(message != '\n'):
+                loop_control=True
+                while(loop_control):
                     message = await websocket.recv()
-                    print(message, end='')
+                    try:
+                        json_object  = json.loads(message)
+                        json_object["Payload"]["body"] = json.loads(json_object["Payload"]["body"])
+                        json_formatted_str = json.dumps(json_object, indent=2)
+                        print("\n\n====================================")
+                        print("          RECEIVED PAYLOAD          ")
+                        print("====================================")
+                        print(json_formatted_str)
+                        loop_control=False
+                    except:
+                        print(message, end='')
                 '''
                 message = await websocket.recv() # wait for the last payload (results)
                 json_object  = json.loads(message)

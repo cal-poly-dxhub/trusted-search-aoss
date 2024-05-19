@@ -427,12 +427,13 @@ def best_answer(question, search_results, execution_arn):
                     Data="\n",
                     ConnectionId=connect_id
                 )
-                return
+                break
             
 
     #response_body = json.loads(response.get('body').read())
     #print(response_body)
     answer_text =answer_chunks
+    print("~~~ANSWER TEXT~~~")
     print(answer_text)
     if "I don't have enough information to answer that question." in answer_text:
         #mismatch
