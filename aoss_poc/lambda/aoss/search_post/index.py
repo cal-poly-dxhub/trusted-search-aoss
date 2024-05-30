@@ -29,12 +29,15 @@ class DebugFilter(logging.Filter):
 
 logger = logging.getLogger(__name__)
 
+
+'''
 handler = logging.StreamHandler()
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 handler.setFormatter(formatter)
 
 # Add the handler to the logger
 logger.addHandler(handler)
+'''
 
 # Set the logger level
 if BENCHMARKING:
@@ -169,7 +172,7 @@ def timing_decorator(func):
         return result
     return wrapper
 
-
+@timing_decorator
 def build_body(text):
     if(EMBEDDING_MODE=="COHERE.TXT"):
         EMBEDDING_SELECTION["payload"]["texts"] = [text]
@@ -265,7 +268,7 @@ def hyde(user_input):
 
     return hyde_generated_text
 
-
+@timing_decorator
 def raw(user_input):
     return user_input
 
@@ -276,6 +279,7 @@ MODE_LIST = {
     }
 MODE="RAW"
 
+@timing_decorator
 def generate_random_string(length):
     """
     Generate a random string of the specified length.
@@ -393,14 +397,9 @@ def zscore_reduction(search_results):
 
     return search_results
 
+
 @timing_decorator
-def best_answer(question, search_results, execution_arn):
-    TEMPERATURE=0
-    TOP_P=.9
-    MAX_TOKENS_TO_SAMPLE=2048
-    TOP_K=250
-
-
+def wait_on_client_socket_connection(execution_arn):
     ############################################# STREAMING THROW IN ##############################
     doc_key = {
             'execution_arn':execution_arn,
@@ -426,6 +425,48 @@ def best_answer(question, search_results, execution_arn):
             raise Exception("ConnID Wait Threshold reached") 
     ############################################# STREAMING THROW IN ##############################
 
+    return connect_id
+
+
+@timing_decorator
+def stream_answer(body,connect_id):
+    response = bedrock_client.invoke_model_with_response_stream(
+        body=body, 
+        modelId=BEDROCK_SELECTION["model_id"], 
+        accept=BEDROCK_SELECTION["accept"], 
+        contentType=BEDROCK_SELECTION["content_type"]
+    )
+
+    
+    event_stream = response.get('body', {})
+    answer_chunks=""
+    for event in event_stream:
+        chunk = event.get('chunk')
+        if chunk:
+            message = json.loads(chunk.get("bytes").decode())
+            if message['type'] == "content_block_delta":
+                chunk_string = message['delta']['text'] or ""
+                answer_chunks+=chunk_string
+                apigateway.post_to_connection(
+                    Data=chunk_string,
+                    ConnectionId=connect_id
+                )
+            elif message['type'] == "message_stop":
+                apigateway.post_to_connection(
+                    Data="\n",
+                    ConnectionId=connect_id
+                )
+                break
+    
+    return answer_chunks
+
+@timing_decorator
+def best_answer(connect_id, question, search_results, execution_arn):
+    TEMPERATURE=0
+    TOP_P=.9
+    MAX_TOKENS_TO_SAMPLE=2048
+    TOP_K=250
+    
     merged_content = ''
     for hit in search_results['hits']['hits']:
         source = hit['_source']
@@ -459,31 +500,9 @@ def best_answer(question, search_results, execution_arn):
     BEDROCK_SELECTION["payload"]["max_tokens"] = MAX_TOKENS_TO_SAMPLE
     body = json.dumps(BEDROCK_SELECTION["payload"])
     logger.info("%s",body)
-    response = bedrock_client.invoke_model_with_response_stream(
-        body=body, 
-        modelId=BEDROCK_SELECTION["model_id"], 
-        accept=BEDROCK_SELECTION["accept"], 
-        contentType=BEDROCK_SELECTION["content_type"]
-    )
-    event_stream = response.get('body', {})
-    answer_chunks=""
-    for event in event_stream:
-        chunk = event.get('chunk')
-        if chunk:
-            message = json.loads(chunk.get("bytes").decode())
-            if message['type'] == "content_block_delta":
-                chunk_string = message['delta']['text'] or ""
-                answer_chunks+=chunk_string
-                apigateway.post_to_connection(
-                    Data=chunk_string,
-                    ConnectionId=connect_id
-                )
-            elif message['type'] == "message_stop":
-                apigateway.post_to_connection(
-                    Data="\n",
-                    ConnectionId=connect_id
-                )
-                break
+
+
+    answer_chunks=stream_answer(body=body,connect_id=connect_id)
             
 
     #response_body = json.loads(response.get('body').read())
@@ -663,6 +682,41 @@ def insert_similar_query( nearest_query_result, user_input ):
     )
     logger.info("%s",response)
 
+
+@timing_decorator 
+def validate_cache_index_exists(wait_breaker=5):
+        # cache logic
+        try:
+            cis_exists=check_index_searches()
+            if( cis_exists==False):
+                create_index_search()
+                wait_checks=0
+                # Poll and wait for the index to be created (takes some time)
+                while not check_index_searches():
+                    logger.info("Index  is not yet created. Waiting...")
+                    time.sleep(5)  # Sleep for 5 seconds before checking again
+                    wait_checks+=1
+                    if wait_checks >= wait_breaker:
+                        raise ValueError("AOSS Index Creation error. Waited to long. Breaking loop.")
+        except Exception as e:
+            info_msg="AOSS index creation error: " + str(e)
+            logger.info("%s",info_msg)
+
+@timing_decorator 
+def execute_cache_knn_with_consitency_wait(user_input,embedding,retry_cap=4):
+    tries=0
+    while( tries < retry_cap ):
+        try:
+            nearest_query_result=find_nearest_query(user_input=user_input,embeddings=embedding)
+            return nearest_query_result
+        except Exception as e:
+            logger.info("%s",str(e))
+            logger.info("Sleeping, index has not reached consistency")
+            time.sleep(15)
+            tries+=1
+    if( tries == 3 ):
+        raise "Failed to query"
+
 @timing_decorator 
 def handler(event,context):
     logger.info("%s",event)
@@ -670,6 +724,8 @@ def handler(event,context):
 
 
     execution_arn=event["execution_arn"]
+
+    connect_id=wait_on_client_socket_connection(execution_arn)
 
     # Patch to support parallel testing of synchronous api gateway call and
     # new async route with step functions
@@ -685,37 +741,12 @@ def handler(event,context):
 
         user_input = MODE_LIST[MODE](user_input)
         embedding=generate_embedding(user_input)
-        # cache logic
-        try:
-            cis_exists=check_index_searches()
-            if( cis_exists==False):
-                create_index_search()
-                wait_checks=0
-                wait_breaker=5
-                # Poll and wait for the index to be created (takes some time)
-                while not check_index_searches():
-                    logger.info("Index  is not yet created. Waiting...")
-                    time.sleep(5)  # Sleep for 5 seconds before checking again
-                    wait_checks+=1
-                    if wait_checks >= wait_breaker:
-                        raise ValueError("AOSS Index Creation error. Waited to long. Breaking loop.")
-        except Exception as e:
-            info_msg="AOSS index creation error: " + str(e)
-            logger.info("%s",info_msg)
 
-        RETRY_CAP=4
-        tries=0
-        while( tries < RETRY_CAP ):
-            try:
-                nearest_query_result=find_nearest_query(user_input=user_input,embeddings=embedding)
-                break
-            except Exception as e:
-                logger.info("%s",str(e))
-                logger.info("Sleeping, index has not reached consistency")
-                time.sleep(15)
-                tries+=1
-        if( tries == 3 ):
-            raise "Failed to query"
+        # check the cache index (wait for consistency)
+        validate_cache_index_exists()
+
+        # get knn results (wait for consistency)
+        nearest_query_result=execute_cache_knn_with_consitency_wait(user_input=user_input,embedding=embedding)
 
         SIMILARITY_THRESHOLD=.85 #threshold to consider a query as something that was asked before
         if( nearest_query_result["hits"] == 0 or nearest_query_result["max_score"] < SIMILARITY_THRESHOLD):
@@ -727,7 +758,7 @@ def handler(event,context):
             # logic to reduce base payload in accordance to z-scoring
             search_results = zscore_reduction(search_results=search_results)
 
-            answer_result = best_answer(question=user_input,search_results=search_results,execution_arn=execution_arn)
+            answer_result = best_answer(connect_id=connect_id,question=user_input,search_results=search_results,execution_arn=execution_arn)
             found_match=answer_result[0]
             answer=answer_result[1]
             if( found_match == 1 ): # only insert for bypass if we get hits
