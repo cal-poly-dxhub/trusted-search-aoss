@@ -139,7 +139,7 @@ async def client_ui(api_endpoint):
 
 def main():
     # set for your query.
-    USER_INPUT="Did barbie win oscar?"
+    USER_INPUT="Did barbie win an oscar?"
 
 
     if( REST_X_API_KEY is None):
@@ -154,9 +154,12 @@ def main():
     print("User input: ", USER_INPUT)
 
     # JSON payload
+    # possible choices for mode are "STREAM" and "DEFAULT"
+    # stream will stream the bedrock response for the answer, default will to a typical non streaming bedrock invocation
     payload = {
         "user_input": USER_INPUT,
-        "search_size": 10
+        "search_size": 10,
+        "bedrock_mode": "STREAM"
     }
     # Send the POST request with JSON payload
     response = requests.post(BUILT_ENDPOINT, json=payload, headers=rest_headers)

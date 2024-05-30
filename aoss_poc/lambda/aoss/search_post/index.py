@@ -208,7 +208,7 @@ def strip_knn_vector(data,strip_field='content-vector'):
         return data
 
 @timing_decorator
-def search_aoss(embeddings,search_size):
+def execute_article_knn(embeddings,search_size):
     query = {
         'size': search_size,
         'query': {
@@ -427,6 +427,19 @@ def wait_on_client_socket_connection(execution_arn):
 
     return connect_id
 
+@timing_decorator
+def answer(body):
+    response = bedrock_client.invoke_model(
+        body=body, 
+        modelId=BEDROCK_SELECTION["model_id"], 
+        accept=BEDROCK_SELECTION["accept"], 
+        contentType=BEDROCK_SELECTION["content_type"]
+    )
+    response_body = json.loads(response.get('body').read())
+    logging.info(response_body)
+    answer_text = response_body["content"][0]["text"]
+
+    return answer_text
 
 @timing_decorator
 def stream_answer(body,connect_id):
@@ -461,7 +474,7 @@ def stream_answer(body,connect_id):
     return answer_chunks
 
 @timing_decorator
-def best_answer(connect_id, question, search_results, execution_arn):
+def best_answer(connect_id, question, search_results, execution_arn, bedrock_mode):
     TEMPERATURE=0
     TOP_P=.9
     MAX_TOKENS_TO_SAMPLE=2048
@@ -501,8 +514,10 @@ def best_answer(connect_id, question, search_results, execution_arn):
     body = json.dumps(BEDROCK_SELECTION["payload"])
     logger.info("%s",body)
 
-
-    answer_chunks=stream_answer(body=body,connect_id=connect_id)
+    if( bedrock_mode=="STREAM"):
+        answer_chunks=stream_answer(body=body,connect_id=connect_id)
+    else:
+        answer_chunks=answer(body=body)
             
 
     #response_body = json.loads(response.get('body').read())
@@ -519,7 +534,7 @@ def best_answer(connect_id, question, search_results, execution_arn):
         return (1,answer_text)
 
 @timing_decorator
-def check_index_searches():
+def check_index_search_cache():
     response = aoss_searches_client.indices.exists(AOSS_SEARCH_INDEX)
     logger.info('\Checking index:')
     logger.info("%s",response)
@@ -556,7 +571,7 @@ def create_index_missed():
 
 
 @timing_decorator
-def create_index_search():
+def create_index_search_cache():
     response = aoss_searches_client.indices.create(
         AOSS_SEARCH_INDEX,
         body={
@@ -684,15 +699,15 @@ def insert_similar_query( nearest_query_result, user_input ):
 
 
 @timing_decorator 
-def validate_cache_index_exists(wait_breaker=5):
+def validate_search_cache_index_exists(wait_breaker=5):
         # cache logic
         try:
-            cis_exists=check_index_searches()
+            cis_exists=check_index_search_cache()
             if( cis_exists==False):
-                create_index_search()
+                create_index_search_cache()
                 wait_checks=0
                 # Poll and wait for the index to be created (takes some time)
-                while not check_index_searches():
+                while not check_index_search_cache():
                     logger.info("Index  is not yet created. Waiting...")
                     time.sleep(5)  # Sleep for 5 seconds before checking again
                     wait_checks+=1
@@ -717,6 +732,54 @@ def execute_cache_knn_with_consitency_wait(user_input,embedding,retry_cap=4):
     if( tries == 3 ):
         raise "Failed to query"
 
+
+@timing_decorator
+def result_via_cache( nearest_query_result, user_input):
+     # map
+    logger.info("!!!!!!!!!!!!!!!!!!! BYPASSED BEDROCK CALL !!!!!!!!!!!!!!!!!!!")
+    search_results = nearest_query_result["response"]["hits"]["hits"][0]["_source"]["search-results"]
+    answer= nearest_query_result["response"]["hits"]["hits"][0]["_source"]["search-answer"]
+    # add to similar queries
+    if( nearest_query_result["max_score"]==1):
+            logger.info("!!!!!!!!!!!!!!!!!!! BYPASSED SIMILAR STATEMENT INSERT, EXACT MATCH !!!!!!!!!!!!!!!!!!!")
+    else:
+        insert_similar_query( nearest_query_result=nearest_query_result, user_input=user_input )
+    
+    return search_results,answer
+
+@timing_decorator
+def answer_via_bypass_logic( nearest_query_result, user_input):
+     # map
+    logger.info("!!!!!!!!!!!!!!!!!!! BYPASSED BEDROCK CALL !!!!!!!!!!!!!!!!!!!")
+    search_results = nearest_query_result["response"]["hits"]["hits"][0]["_source"]["search-results"]
+    answer= nearest_query_result["response"]["hits"]["hits"][0]["_source"]["search-answer"]
+    # add to similar queries
+    if( nearest_query_result["max_score"]==1):
+            logger.info("!!!!!!!!!!!!!!!!!!! BYPASSED SIMILAR STATEMENT INSERT, EXACT MATCH !!!!!!!!!!!!!!!!!!!")
+    else:
+        insert_similar_query( nearest_query_result=nearest_query_result, user_input=user_input )
+    
+    return search_results,answer
+
+@timing_decorator
+def answer_via_bedrock( embedding, search_size, execution_arn, bedrock_mode, connect_id, user_input ):
+    #new user search term, add to queries doc store
+    search_results = strip_knn_vector(execute_article_knn(embeddings=embedding,search_size=search_size))
+    logger.info("~~~DOC SEARCH RESULT~~~")
+    logger.info("%s",strip_knn_vector(search_results))
+
+    # logic to reduce base payload in accordance to z-scoring
+    search_results = zscore_reduction(search_results=search_results)
+
+    answer_result = best_answer(connect_id=connect_id,question=user_input,search_results=search_results,execution_arn=execution_arn,bedrock_mode=bedrock_mode)
+    found_match=answer_result[0]
+    answer=answer_result[1]
+    if( found_match == 1 ): # only insert for bypass if we get hits
+        insert_query_result( user_input=user_input, embedding=embedding, search_results=search_results, answer=answer)
+
+    return search_results,answer
+
+
 @timing_decorator 
 def handler(event,context):
     logger.info("%s",event)
@@ -725,7 +788,7 @@ def handler(event,context):
 
     execution_arn=event["execution_arn"]
 
-    connect_id=wait_on_client_socket_connection(execution_arn)
+    
 
     # Patch to support parallel testing of synchronous api gateway call and
     # new async route with step functions
@@ -738,41 +801,33 @@ def handler(event,context):
 
         user_input = field_values["user_input"]
         search_size = field_values["search_size"]
+        bedrock_mode = field_values["bedrock_mode"]
+
+        if( BENCHMARKING ):
+            logger.debug("===================================")
+            logger.debug("BENCHMARKING")
+            logger.debug("===================================")
+            logger.debug("user_input: %s",user_input)
+            logger.debug("search_size: %s",search_size)
+            logger.debug("mode: %s", bedrock_mode)
+            logger.debug("+++++++++++++++++++++++++++++++++++")
+
+        connect_id=wait_on_client_socket_connection(execution_arn)
 
         user_input = MODE_LIST[MODE](user_input)
         embedding=generate_embedding(user_input)
 
         # check the cache index (wait for consistency)
-        validate_cache_index_exists()
+        validate_search_cache_index_exists()
 
         # get knn results (wait for consistency)
         nearest_query_result=execute_cache_knn_with_consitency_wait(user_input=user_input,embedding=embedding)
 
         SIMILARITY_THRESHOLD=.85 #threshold to consider a query as something that was asked before
         if( nearest_query_result["hits"] == 0 or nearest_query_result["max_score"] < SIMILARITY_THRESHOLD):
-            #new user search term, add to queries doc store
-            search_results = strip_knn_vector(search_aoss(embeddings=embedding,search_size=search_size))
-            logger.info("~~~DOC SEARCH RESULT~~~")
-            logger.info("%s",strip_knn_vector(search_results))
-
-            # logic to reduce base payload in accordance to z-scoring
-            search_results = zscore_reduction(search_results=search_results)
-
-            answer_result = best_answer(connect_id=connect_id,question=user_input,search_results=search_results,execution_arn=execution_arn)
-            found_match=answer_result[0]
-            answer=answer_result[1]
-            if( found_match == 1 ): # only insert for bypass if we get hits
-                insert_query_result( user_input=user_input, embedding=embedding, search_results=search_results, answer=answer)
+            search_results,answer=answer_via_bedrock( embedding=embedding, search_size=search_size, execution_arn=execution_arn, bedrock_mode=bedrock_mode, connect_id=connect_id, user_input=user_input )
         else: #hit on similar query; will always be a result of one (top) if we hit threshold
-            # map
-            logger.info("!!!!!!!!!!!!!!!!!!! BYPASSED BEDROCK CALL !!!!!!!!!!!!!!!!!!!")
-            search_results = nearest_query_result["response"]["hits"]["hits"][0]["_source"]["search-results"]
-            answer= nearest_query_result["response"]["hits"]["hits"][0]["_source"]["search-answer"]
-            # add to similar queries
-            if( nearest_query_result["max_score"]==1):
-                 logger.info("!!!!!!!!!!!!!!!!!!! BYPASSED SIMILAR STATEMENT INSERT, EXACT MATCH !!!!!!!!!!!!!!!!!!!")
-            else:
-                insert_similar_query( nearest_query_result=nearest_query_result, user_input=user_input )
+            search_results,answer=answer_via_bypass_logic(nearest_query_result=nearest_query_result,user_input=user_input)
 
         return {
             "statusCode":200,

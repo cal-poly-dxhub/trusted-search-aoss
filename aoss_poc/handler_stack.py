@@ -258,6 +258,7 @@ class HandlerStack(Stack):
                 "execution_arn":  stepfunctions.JsonPath.execution_id,
                 "user_input": stepfunctions.JsonPath.string_at("$.user_input"),
                 "search_size": stepfunctions.JsonPath.string_at("$.search_size"),
+                "bedrock_mode": stepfunctions.JsonPath.string_at("$.bedrock_mode"),
             }),
             result_path="$.search_results"
         )
