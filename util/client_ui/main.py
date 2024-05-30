@@ -83,6 +83,7 @@ async def client_ui(api_endpoint):
     async def open_connection():
         # Create a WebSocket connection
         async with websockets.connect(api_endpoint, extra_headers=websocket_headers) as websocket:
+            '''
             try:
                 # Wait for a message from the server
                 spin = asyncio.Task(spinner())
@@ -97,6 +98,34 @@ async def client_ui(api_endpoint):
                 print("====================================")
                 print(json_formatted_str)
                 #print(f"Received message: {message}")
+            '''
+            message=''
+            try:
+                loop_control=True
+                while(loop_control):
+                    message = await websocket.recv()
+                    try:
+                        json_object  = json.loads(message)
+                        json_object["Payload"]["body"] = json.loads(json_object["Payload"]["body"])
+                        json_formatted_str = json.dumps(json_object, indent=2)
+                        print("\n\n====================================")
+                        print("          RECEIVED PAYLOAD          ")
+                        print("====================================")
+                        print(json_formatted_str)
+                        loop_control=False
+                    except:
+                        print(message, end='')
+                '''
+                message = await websocket.recv() # wait for the last payload (results)
+                json_object  = json.loads(message)
+                json_object["Payload"]["body"] = json.loads(json_object["Payload"]["body"])
+                json_formatted_str = json.dumps(json_object, indent=2)
+                print("\n\n====================================")
+                print("          RECEIVED PAYLOAD          ")
+                print("====================================")
+                print(json_formatted_str)
+                #print(f"Received message: {message}")
+                '''
             except Exception as e:
                 print("\n\n====================================")
                 print(f"An error occurred: {e}")
@@ -110,7 +139,7 @@ async def client_ui(api_endpoint):
 
 def main():
     # set for your query.
-    USER_INPUT="Where home alone?"
+    USER_INPUT="Did barbie win an oscar?"
 
 
     if( REST_X_API_KEY is None):
@@ -125,9 +154,12 @@ def main():
     print("User input: ", USER_INPUT)
 
     # JSON payload
+    # possible choices for mode are "STREAM" and "DEFAULT"
+    # stream will stream the bedrock response for the answer, default will to a typical non streaming bedrock invocation
     payload = {
         "user_input": USER_INPUT,
-        "search_size": 10
+        "search_size": 10,
+        "bedrock_mode": "STREAM"
     }
     # Send the POST request with JSON payload
     response = requests.post(BUILT_ENDPOINT, json=payload, headers=rest_headers)

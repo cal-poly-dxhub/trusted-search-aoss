@@ -10,10 +10,45 @@ import time
 import hashlib
 import datetime
 import random
-
+import logging
 import numpy as np
 
 # TODO -- Parameterize content vector
+
+
+
+####################################
+# LOGGING CONFIG
+####################################
+BENCHMARKING=True
+
+# Create a custom filter
+class DebugFilter(logging.Filter):
+    def filter(self, record):
+        return record.levelno == logging.DEBUG
+
+logger = logging.getLogger(__name__)
+
+
+'''
+handler = logging.StreamHandler()
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+handler.setFormatter(formatter)
+
+# Add the handler to the logger
+logger.addHandler(handler)
+'''
+
+# Set the logger level
+if BENCHMARKING:
+    logger.setLevel(logging.DEBUG)
+    # Add the filter to the logger
+    logger.addFilter(DebugFilter())
+else:
+    logger.setLevel(logging.CRITICAL)
+
+####################################
+
 
 CORS_HEADERS = {
     'Access-Control-Allow-Headers': 'Content-Type',
@@ -76,6 +111,17 @@ BEDROCK_CONFIGURATION = {
 }
 BEDROCK_SELECTION=BEDROCK_CONFIGURATION[BEDROCK_MODE]
 
+#####################################################################
+# streaming add-in
+TABLE_NAME = os.environ["TABLE_NAME"]
+
+ENDPOINT_URL = os.environ["ENDPOINT_URL"]
+ENDPOINT_URL=ENDPOINT_URL.replace("wss://", "https://") + "/prod"
+dynamodb_resource = boto3.resource('dynamodb')
+connections_table = dynamodb_resource.Table(TABLE_NAME)
+#####################################################################
+
+apigateway = boto3.client('apigatewaymanagementapi',endpoint_url=ENDPOINT_URL)
 
 bedrock_client = boto3.client(service_name="bedrock-runtime")
 
@@ -112,6 +158,21 @@ aoss_missed_client = OpenSearch(
     timeout=300
 )
 
+
+def timing_decorator(func):
+    def wrapper(*args, **kwargs):
+        if BENCHMARKING:
+            start_time = time.time()
+            result = func(*args, **kwargs)
+            end_time = time.time()
+            execution_time = end_time - start_time
+            logger.debug(f"Execution time of {func.__name__}: {execution_time:.6f} seconds")
+        else:
+            result = func(*args, **kwargs)
+        return result
+    return wrapper
+
+@timing_decorator
 def build_body(text):
     if(EMBEDDING_MODE=="COHERE.TXT"):
         EMBEDDING_SELECTION["payload"]["texts"] = [text]
@@ -120,6 +181,8 @@ def build_body(text):
 
     return json.dumps(EMBEDDING_SELECTION["payload"])
 
+
+@timing_decorator
 def generate_embedding(text):
     body = build_body(text)
     bedrock_response = bedrock_client.invoke_model(
@@ -132,6 +195,7 @@ def generate_embedding(text):
     embedding = bedrock_response_body.get("embedding")
     return embedding
 
+@timing_decorator
 def strip_knn_vector(data,strip_field='content-vector'):
     try:
         rebuild = []
@@ -142,8 +206,9 @@ def strip_knn_vector(data,strip_field='content-vector'):
         return data
     except:
         return data
-    
-def search_aoss(embeddings,search_size):
+
+@timing_decorator
+def execute_article_knn(embeddings,search_size):
     query = {
         'size': search_size,
         'query': {
@@ -162,6 +227,7 @@ def search_aoss(embeddings,search_size):
     )
     return(response)
 
+@timing_decorator
 def hyde(user_input):
     TEMPERATURE=.1
     TOP_P=.8
@@ -174,7 +240,7 @@ def hyde(user_input):
     template = Template(system_prompt)
     prompt = template.substitute(user_input=user_input)
 
-    # print(prompt)
+    logger.info("%s",prompt)
     msg = [ 
         {
             "role":"user",
@@ -198,11 +264,11 @@ def hyde(user_input):
     response_body = json.loads(response.get('body').read())
 
     hyde_generated_text = response_body.get("completion")
-    print(hyde_generated_text)
+    logger.info("%s",hyde_generated_text)
 
     return hyde_generated_text
 
-
+@timing_decorator
 def raw(user_input):
     return user_input
 
@@ -213,6 +279,7 @@ MODE_LIST = {
     }
 MODE="RAW"
 
+@timing_decorator
 def generate_random_string(length):
     """
     Generate a random string of the specified length.
@@ -231,7 +298,7 @@ def generate_random_string(length):
     
     return random_string
 
-
+@timing_decorator
 def insert_missed(question):
     try:
         cis_exists=check_index_missed()
@@ -241,13 +308,13 @@ def insert_missed(question):
             wait_breaker=5
             # Poll and wait for the index to be created (takes some time)
             while not check_index_missed():
-                print(f"Missed index is not yet created. Waiting...")
+                logger.info("Missed index is not yet created. Waiting...")
                 time.sleep(5)  # Sleep for 5 seconds before checking again
                 wait_checks+=1
                 if wait_checks >= wait_breaker:
                     raise ValueError("AOSS Index Creation error. Waited to long. Breaking loop.")
     except Exception as e:
-        print("AOSS index creation error: " + str(e) )
+        logger.critical("AOSS index creation error: " + str(e) )
 
     RETRY_CAP=4
     tries=0
@@ -268,21 +335,21 @@ def insert_missed(question):
                 "unique_id":digest,
                 "query":question,
             }
-            print("Ingesting missed query: ",question)
+            logger.info("Ingesting missed query: %s",question)
             response = aoss_missed_client.index(
                 index=AOSS_MISSED_INDEX,
                 body = document
             )
             break
         except Exception as e:
-            print(str(e))
-            print("Sleeping, missed index has not reached consistency")
+            logger.warning(str(e))
+            logger.warning("Sleeping, missed index has not reached consistency")
             time.sleep(15)
             tries+=1
     if( tries == 3 ):
         raise "Failed to insert missed"
 
-
+@timing_decorator
 def calculate_zscores(cosine_scores):
     zscores = []
     # Calculate the mean of the sample points
@@ -294,7 +361,7 @@ def calculate_zscores(cosine_scores):
 
     return z_scores
 
-
+@timing_decorator
 def zscore_reduction(search_results):
     cosine_scores=[]
     for hit in search_results['hits']['hits']:
@@ -307,10 +374,11 @@ def zscore_reduction(search_results):
         search_results['hits']['hits'][idx]['_zscore']=z
 
 
-    print("~~~~~~~~~~~~~~BEFORE REDUCTION~~~~~~~~~~~~~~~~~~~")
-    print("LEN: ", len(search_results['hits']['hits']))
+    logger.info("~~~~~~~~~~~~~~BEFORE REDUCTION~~~~~~~~~~~~~~~~~~~")
+    logger.info("LEN: %s", len(search_results['hits']['hits']))
     for hit in search_results['hits']['hits']:
-        print(str(hit['_score']) + " | " + str(hit['_zscore']))
+        calc_str=str(hit['_score']) + " | " + str(hit['_zscore'])
+        logger.info("%s",calc_str)
 
     zscore_index = 0
     first_z_score = z_scores[0]
@@ -321,18 +389,97 @@ def zscore_reduction(search_results):
         zscore_index += 1
     search_results['hits']['hits']=reducer
 
-    print("~~~~~~~~~~~~~~POST REDUCTION~~~~~~~~~~~~~~~~~~~")
-    print("LEN: ", len(search_results['hits']['hits']))
+    logger.info("~~~~~~~~~~~~~~POST REDUCTION~~~~~~~~~~~~~~~~~~~")
+    logger.info("LEN: %s", len(search_results['hits']['hits']))
     for hit in search_results['hits']['hits']:
-        print(str(hit['_score']) + " | " + str(hit['_zscore']))
+        calc_str=str(hit['_score']) + " | " + str(hit['_zscore'])
+        logger.info("%s",calc_str)
 
     return search_results
 
-def best_answer(question, search_results):
+
+@timing_decorator
+def wait_on_client_socket_connection(execution_arn):
+    ############################################# STREAMING THROW IN ##############################
+    doc_key = {
+            'execution_arn':execution_arn,
+    }
+    dynamodb_response = connections_table.get_item(Key=doc_key,ConsistentRead=True)
+    connect_id = dynamodb_response.get('Item', {}).get('connect_id')
+    logger.info("~~~~connect_id~~~~")
+    logger.info("%s", connect_id)
+
+    # Dirty "Hack" to fix race condition of workflow getting to this point before client updates
+    # the dynamodb conneciton value. This needs fixed and cleaned for production.
+    waiter = 1
+    while( len(connect_id) < 1 ):
+        info_msg="~~~~waiting for ",str(waiter),"s~~~~"
+        logger.info("%s",info_msg)
+        time.sleep(waiter)
+        dynamodb_response = connections_table.get_item(Key=doc_key,ConsistentRead=True)
+        connect_id = dynamodb_response.get('Item', {}).get('connect_id')
+        logger.info("~~~~connect_id~~~~")
+        logger.info("%s", connect_id)
+        waiter+=2
+        if( waiter > 5 ):
+            raise Exception("ConnID Wait Threshold reached") 
+    ############################################# STREAMING THROW IN ##############################
+
+    return connect_id
+
+@timing_decorator
+def answer(body):
+    response = bedrock_client.invoke_model(
+        body=body, 
+        modelId=BEDROCK_SELECTION["model_id"], 
+        accept=BEDROCK_SELECTION["accept"], 
+        contentType=BEDROCK_SELECTION["content_type"]
+    )
+    response_body = json.loads(response.get('body').read())
+    logging.info(response_body)
+    answer_text = response_body["content"][0]["text"]
+
+    return answer_text
+
+@timing_decorator
+def stream_answer(body,connect_id):
+    response = bedrock_client.invoke_model_with_response_stream(
+        body=body, 
+        modelId=BEDROCK_SELECTION["model_id"], 
+        accept=BEDROCK_SELECTION["accept"], 
+        contentType=BEDROCK_SELECTION["content_type"]
+    )
+
+    
+    event_stream = response.get('body', {})
+    answer_chunks=""
+    for event in event_stream:
+        chunk = event.get('chunk')
+        if chunk:
+            message = json.loads(chunk.get("bytes").decode())
+            if message['type'] == "content_block_delta":
+                chunk_string = message['delta']['text'] or ""
+                answer_chunks+=chunk_string
+                apigateway.post_to_connection(
+                    Data=chunk_string,
+                    ConnectionId=connect_id
+                )
+            elif message['type'] == "message_stop":
+                apigateway.post_to_connection(
+                    Data="\n",
+                    ConnectionId=connect_id
+                )
+                break
+    
+    return answer_chunks
+
+@timing_decorator
+def best_answer(connect_id, question, search_results, execution_arn, bedrock_mode):
     TEMPERATURE=0
     TOP_P=.9
     MAX_TOKENS_TO_SAMPLE=2048
     TOP_K=250
+    
     merged_content = ''
     for hit in search_results['hits']['hits']:
         source = hit['_source']
@@ -351,7 +498,7 @@ def best_answer(question, search_results):
     template = Template(prompt_string)
     prompt = template.substitute(data=data,question=question)
 
-    # print(prompt)
+    logger.info("%s",prompt)
     msg = [ 
         {
             "role":"user",
@@ -365,37 +512,42 @@ def best_answer(question, search_results):
     BEDROCK_SELECTION["payload"]["top_p"] = TOP_P
     BEDROCK_SELECTION["payload"]["max_tokens"] = MAX_TOKENS_TO_SAMPLE
     body = json.dumps(BEDROCK_SELECTION["payload"])
-    print(body)
-    response = bedrock_client.invoke_model(
-        body=body, 
-        modelId=BEDROCK_SELECTION["model_id"], 
-        accept=BEDROCK_SELECTION["accept"], 
-        contentType=BEDROCK_SELECTION["content_type"]
-    )
-    response_body = json.loads(response.get('body').read())
-    print(response_body)
-    answer_text = response_body["content"][0]["text"]
-    print(answer_text)
+    logger.info("%s",body)
+
+    if( bedrock_mode=="STREAM"):
+        answer_chunks=stream_answer(body=body,connect_id=connect_id)
+    else:
+        answer_chunks=answer(body=body)
+            
+
+    #response_body = json.loads(response.get('body').read())
+    #logger.info(response_body)
+    answer_text =answer_chunks
+    logger.info("~~~ANSWER TEXT~~~")
+    logger.info("%s",answer_text)
     if "I don't have enough information to answer that question." in answer_text:
         #mismatch
-        print("++++++++++++RUNNING INSERT INTO MISSED ROUTINE++++++++++++")
+        logger.info("++++++++++++RUNNING INSERT INTO MISSED ROUTINE++++++++++++")
         insert_missed(question)
         return (-1,answer_text)
     else:
         return (1,answer_text)
 
-def check_index_searches():
+@timing_decorator
+def check_index_search_cache():
     response = aoss_searches_client.indices.exists(AOSS_SEARCH_INDEX)
-    print('\Checking index:')
-    print(response)
+    logger.info('\Checking index:')
+    logger.info("%s",response)
     return response
 
+@timing_decorator
 def check_index_missed():
     response = aoss_searches_client.indices.exists(AOSS_MISSED_INDEX)
-    print('\Checking index:')
-    print(response)
+    logger.info('\Checking index:')
+    logger.info("%s",response)
     return response
 
+@timing_decorator
 def create_index_missed():
     response = aoss_searches_client.indices.create(
         AOSS_MISSED_INDEX,
@@ -412,14 +564,14 @@ def create_index_missed():
             }
         })
     
-    print('\nCreating index:')
-    print(response)
+    logger.info('Creating index:')
+    logger.info("%s",response)
 
 
 
 
-
-def create_index_search():
+@timing_decorator
+def create_index_search_cache():
     response = aoss_searches_client.indices.create(
         AOSS_SEARCH_INDEX,
         body={
@@ -457,9 +609,10 @@ def create_index_search():
             }
         })
     
-    print('\nCreating index:')
-    print(response)
+    logger.info('Creating index:')
+    logger.info("%s",response)
 
+@timing_decorator
 def find_nearest_query(user_input,embeddings):
     # can probably add in a correct routine here when you get two hits and remap these docs
     # into a single doc
@@ -481,16 +634,20 @@ def find_nearest_query(user_input,embeddings):
     )
 
     max_score = -1 if response['hits']['max_score'] is None else response['hits']['max_score']
-    print("Max_Score: ", max_score)
+    logger.info("Max_Score: %s", max_score)
 
-    print("~~~QUERY SEARCH RESULT~~~")
-    print(strip_knn_vector(response,strip_field="user-query-vector"))
+    logger.info("~~~QUERY SEARCH RESULT~~~")
+    info_msg=strip_knn_vector(response,strip_field="user-query-vector")
+    logger.info("%s",info_msg)
+
+
     return {
         "hits":len(response['hits']['hits']),
         "max_score":max_score,
         "response":response 
     }
-           
+
+@timing_decorator           
 def insert_query_result( user_input, embedding, search_results, answer):
     document = {
         "user-query":user_input,
@@ -499,13 +656,14 @@ def insert_query_result( user_input, embedding, search_results, answer):
         "search-results":search_results,
         "search-answer":answer
     }
-    print("Ingesting query: ",user_input)
+    logger.info("Ingesting query: %s",user_input)
     response = aoss_searches_client.index(
         index=AOSS_SEARCH_INDEX,
         body = document
     )
-    print(response)
+    logger.info("%s",response)
 
+@timing_decorator
 def insert_similar_query( nearest_query_result, user_input ):
     doc_id=nearest_query_result["response"]["hits"]["hits"][0]["_id"]
     similar_queries=nearest_query_result["response"]["hits"]["hits"][0]["_source"]["similar-queries"]
@@ -516,10 +674,11 @@ def insert_similar_query( nearest_query_result, user_input ):
         sha256_hash.update(user_input.encode('utf-8'))
         digest = sha256_hash.hexdigest()
 
-        print(f"SHA-256 hash of '{user_input}' is: {digest}")
+        info_msg=f"SHA-256 hash of '{user_input}' is: {digest}"
+        logger.info("%s",info_msg)
         similar_queries[digest] = user_input
     except Exception as e:
-        print(str(e))
+        logger.info(str(e))
 
     update_data = {
         "doc": {
@@ -527,20 +686,109 @@ def insert_similar_query( nearest_query_result, user_input ):
         }
     }
 
-    print(doc_id)
-    print(similar_queries)
-    print(update_data)
+    logger.info("%s",doc_id)
+    logger.info("%s",similar_queries)
+    logger.info("%s",update_data)
 
     response = aoss_searches_client.update(
             index = AOSS_SEARCH_INDEX,
             body = update_data,
             id=doc_id
     )
-    print(response)
+    logger.info("%s",response)
 
+
+@timing_decorator 
+def validate_search_cache_index_exists(wait_breaker=5):
+        # cache logic
+        try:
+            cis_exists=check_index_search_cache()
+            if( cis_exists==False):
+                create_index_search_cache()
+                wait_checks=0
+                # Poll and wait for the index to be created (takes some time)
+                while not check_index_search_cache():
+                    logger.info("Index  is not yet created. Waiting...")
+                    time.sleep(5)  # Sleep for 5 seconds before checking again
+                    wait_checks+=1
+                    if wait_checks >= wait_breaker:
+                        raise ValueError("AOSS Index Creation error. Waited to long. Breaking loop.")
+        except Exception as e:
+            info_msg="AOSS index creation error: " + str(e)
+            logger.info("%s",info_msg)
+
+@timing_decorator 
+def execute_cache_knn_with_consitency_wait(user_input,embedding,retry_cap=4):
+    tries=0
+    while( tries < retry_cap ):
+        try:
+            nearest_query_result=find_nearest_query(user_input=user_input,embeddings=embedding)
+            return nearest_query_result
+        except Exception as e:
+            logger.info("%s",str(e))
+            logger.info("Sleeping, index has not reached consistency")
+            time.sleep(15)
+            tries+=1
+    if( tries == 3 ):
+        raise "Failed to query"
+
+
+@timing_decorator
+def result_via_cache( nearest_query_result, user_input):
+     # map
+    logger.info("!!!!!!!!!!!!!!!!!!! BYPASSED BEDROCK CALL !!!!!!!!!!!!!!!!!!!")
+    search_results = nearest_query_result["response"]["hits"]["hits"][0]["_source"]["search-results"]
+    answer= nearest_query_result["response"]["hits"]["hits"][0]["_source"]["search-answer"]
+    # add to similar queries
+    if( nearest_query_result["max_score"]==1):
+            logger.info("!!!!!!!!!!!!!!!!!!! BYPASSED SIMILAR STATEMENT INSERT, EXACT MATCH !!!!!!!!!!!!!!!!!!!")
+    else:
+        insert_similar_query( nearest_query_result=nearest_query_result, user_input=user_input )
+    
+    return search_results,answer
+
+@timing_decorator
+def answer_via_bypass_logic( nearest_query_result, user_input):
+     # map
+    logger.info("!!!!!!!!!!!!!!!!!!! BYPASSED BEDROCK CALL !!!!!!!!!!!!!!!!!!!")
+    search_results = nearest_query_result["response"]["hits"]["hits"][0]["_source"]["search-results"]
+    answer= nearest_query_result["response"]["hits"]["hits"][0]["_source"]["search-answer"]
+    # add to similar queries
+    if( nearest_query_result["max_score"]==1):
+            logger.info("!!!!!!!!!!!!!!!!!!! BYPASSED SIMILAR STATEMENT INSERT, EXACT MATCH !!!!!!!!!!!!!!!!!!!")
+    else:
+        insert_similar_query( nearest_query_result=nearest_query_result, user_input=user_input )
+    
+    return search_results,answer
+
+@timing_decorator
+def answer_via_bedrock( embedding, search_size, execution_arn, bedrock_mode, connect_id, user_input ):
+    #new user search term, add to queries doc store
+    search_results = strip_knn_vector(execute_article_knn(embeddings=embedding,search_size=search_size))
+    logger.info("~~~DOC SEARCH RESULT~~~")
+    logger.info("%s",strip_knn_vector(search_results))
+
+    # logic to reduce base payload in accordance to z-scoring
+    search_results = zscore_reduction(search_results=search_results)
+
+    answer_result = best_answer(connect_id=connect_id,question=user_input,search_results=search_results,execution_arn=execution_arn,bedrock_mode=bedrock_mode)
+    found_match=answer_result[0]
+    answer=answer_result[1]
+    if( found_match == 1 ): # only insert for bypass if we get hits
+        insert_query_result( user_input=user_input, embedding=embedding, search_results=search_results, answer=answer)
+
+    return search_results,answer
+
+
+@timing_decorator 
 def handler(event,context):
-    print(event)
-    print(context)
+    logger.info("%s",event)
+    logger.info("%s",context)
+
+
+    execution_arn=event["execution_arn"]
+
+    
 
     # Patch to support parallel testing of synchronous api gateway call and
     # new async route with step functions
@@ -553,66 +801,33 @@ def handler(event,context):
 
         user_input = field_values["user_input"]
         search_size = field_values["search_size"]
+        bedrock_mode = field_values["bedrock_mode"]
+
+        if( BENCHMARKING ):
+            logger.debug("===================================")
+            logger.debug("BENCHMARKING")
+            logger.debug("===================================")
+            logger.debug("user_input: %s",user_input)
+            logger.debug("search_size: %s",search_size)
+            logger.debug("mode: %s", bedrock_mode)
+            logger.debug("+++++++++++++++++++++++++++++++++++")
+
+        connect_id=wait_on_client_socket_connection(execution_arn)
 
         user_input = MODE_LIST[MODE](user_input)
         embedding=generate_embedding(user_input)
-        # cache logic
-        try:
-            cis_exists=check_index_searches()
-            if( cis_exists==False):
-                create_index_search()
-                wait_checks=0
-                wait_breaker=5
-                # Poll and wait for the index to be created (takes some time)
-                while not check_index_searches():
-                    print(f"Index  is not yet created. Waiting...")
-                    time.sleep(5)  # Sleep for 5 seconds before checking again
-                    wait_checks+=1
-                    if wait_checks >= wait_breaker:
-                        raise ValueError("AOSS Index Creation error. Waited to long. Breaking loop.")
-        except Exception as e:
-            print("AOSS index creation error: " + str(e) )
 
-        RETRY_CAP=4
-        tries=0
-        while( tries < RETRY_CAP ):
-            try:
-                nearest_query_result=find_nearest_query(user_input=user_input,embeddings=embedding)
-                break
-            except Exception as e:
-                print(str(e))
-                print("Sleeping, index has not reached consistency")
-                time.sleep(15)
-                tries+=1
-        if( tries == 3 ):
-            raise "Failed to query"
+        # check the cache index (wait for consistency)
+        validate_search_cache_index_exists()
+
+        # get knn results (wait for consistency)
+        nearest_query_result=execute_cache_knn_with_consitency_wait(user_input=user_input,embedding=embedding)
 
         SIMILARITY_THRESHOLD=.85 #threshold to consider a query as something that was asked before
         if( nearest_query_result["hits"] == 0 or nearest_query_result["max_score"] < SIMILARITY_THRESHOLD):
-            #new user search term, add to queries doc store
-            search_results = strip_knn_vector(search_aoss(embeddings=embedding,search_size=search_size))
-            print("~~~DOC SEARCH RESULT~~~")
-            print(strip_knn_vector(search_results))
-
-            # logic to reduce base payload in accordance to z-scoring
-            search_results = zscore_reduction(search_results=search_results)
-
-            answer_result = best_answer(question=user_input,search_results=search_results)
-            found_match=answer_result[0]
-            answer=answer_result[1]
-            if( found_match == 1 ): # only insert for bypass if we get hits
-                insert_query_result( user_input=user_input, embedding=embedding, search_results=search_results, answer=answer)
+            search_results,answer=answer_via_bedrock( embedding=embedding, search_size=search_size, execution_arn=execution_arn, bedrock_mode=bedrock_mode, connect_id=connect_id, user_input=user_input )
         else: #hit on similar query; will always be a result of one (top) if we hit threshold
-            # map
-            print("!!!!!!!!!!!!!!!!!!! BYPASSED BEDROCK CALL !!!!!!!!!!!!!!!!!!!")
-            search_results = nearest_query_result["response"]["hits"]["hits"][0]["_source"]["search-results"]
-            answer= nearest_query_result["response"]["hits"]["hits"][0]["_source"]["search-answer"]
-            # add to similar queries
-            if( nearest_query_result["max_score"]==1):
-                 print("!!!!!!!!!!!!!!!!!!! BYPASSED SIMILAR STATEMENT INSERT, EXACT MATCH !!!!!!!!!!!!!!!!!!!")
-            else:
-                insert_similar_query( nearest_query_result=nearest_query_result, user_input=user_input )
-
+            search_results,answer=answer_via_bypass_logic(nearest_query_result=nearest_query_result,user_input=user_input)
 
         return {
             "statusCode":200,

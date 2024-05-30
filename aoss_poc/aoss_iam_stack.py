@@ -51,7 +51,7 @@ class AOSSIamStack(Stack):
     ))
     aoss_role.attach_inline_policy(iam.Policy(self, "bedrock-allow-policy",
         statements=[iam.PolicyStatement(
-            actions=["bedrock:InvokeModel"],
+            actions=["bedrock:InvokeModel","bedrock:InvokeModelWithResponseStream"],
             resources=["*"]
         )
         ]
