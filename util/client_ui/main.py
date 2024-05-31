@@ -110,6 +110,7 @@ async def client_ui(api_endpoint):
             try:
                 loop_control=True
                 answer=""
+                print("Answer: ", end='')
                 while(loop_control):
                     message = await websocket.recv()
                     try:
@@ -121,7 +122,8 @@ async def client_ui(api_endpoint):
                         logger.info("          RECEIVED PAYLOAD              ")
                         logger.info("++++++++++++++++++++++++++++++++++++++++")
                         logger.info("%s",json_formatted_str)
-                        print( "Answer: ", json_object["Payload"]["body"]["search_answer"])
+                        if( answer == "" ):
+                            print( json_object["Payload"]["body"]["search_answer"])
                         loop_control=False
                     except: # this is streaming text
                         answer+=message
