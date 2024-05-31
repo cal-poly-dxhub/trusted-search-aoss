@@ -24,6 +24,30 @@ WEBSOCKET_X_API_KEY = os.environ.get("WEBSOCKET_X_API_KEY")
 WEBSOCKET_API_NAME = "core-websocket-api"
 
 
+# Create a logger
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+
+# Create a file handler
+file_handler = logging.FileHandler('client.log')
+file_handler.setLevel(logging.DEBUG)
+
+# Create a console handler
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setLevel(logging.DEBUG)
+
+# Create a formatter and add it to the handlers
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+file_handler.setFormatter(formatter)
+console_handler.setFormatter(formatter)
+
+# Add the handlers to the logger
+logger.addHandler(file_handler)
+#logger.addHandler(console_handler)
+
+
+
+
 class ApiGatewayWebsocket:
     """Encapsulates Amazon API Gateway websocket functions."""
 
@@ -67,8 +91,7 @@ rest_headers = {
 
 # Define an async helper function to create the WebSocket connection
 async def client_ui(api_endpoint):
-    print(api_endpoint)
-    #print(websocket_headers)
+    logger.info(api_endpoint)
     processing_done=False
 
     async def spinner():
@@ -83,55 +106,32 @@ async def client_ui(api_endpoint):
     async def open_connection():
         # Create a WebSocket connection
         async with websockets.connect(api_endpoint, extra_headers=websocket_headers) as websocket:
-            '''
-            try:
-                # Wait for a message from the server
-                spin = asyncio.Task(spinner())
-                message = await websocket.recv()
-                processing_done=True
-                spin.cancel()
-                json_object  = json.loads(message)
-                json_object["Payload"]["body"] = json.loads(json_object["Payload"]["body"])
-                json_formatted_str = json.dumps(json_object, indent=2)
-                print("\n\n====================================")
-                print("          RECEIVED PAYLOAD          ")
-                print("====================================")
-                print(json_formatted_str)
-                #print(f"Received message: {message}")
-            '''
             message=''
             try:
                 loop_control=True
+                answer=""
                 while(loop_control):
                     message = await websocket.recv()
                     try:
                         json_object  = json.loads(message)
                         json_object["Payload"]["body"] = json.loads(json_object["Payload"]["body"])
                         json_formatted_str = json.dumps(json_object, indent=2)
-                        print("\n\n====================================")
-                        print("          RECEIVED PAYLOAD          ")
-                        print("====================================")
-                        print(json_formatted_str)
+                        logger.info("Streamed Answer: %s", answer)
+                        logger.info("++++++++++++++++++++++++++++++++++++++++")
+                        logger.info("          RECEIVED PAYLOAD              ")
+                        logger.info("++++++++++++++++++++++++++++++++++++++++")
+                        logger.info("%s",json_formatted_str)
+                        print( "Answer: ", json_object["Payload"]["body"]["search_answer"])
                         loop_control=False
-                    except:
+                    except: # this is streaming text
+                        answer+=message
                         print(message, end='')
-                '''
-                message = await websocket.recv() # wait for the last payload (results)
-                json_object  = json.loads(message)
-                json_object["Payload"]["body"] = json.loads(json_object["Payload"]["body"])
-                json_formatted_str = json.dumps(json_object, indent=2)
-                print("\n\n====================================")
-                print("          RECEIVED PAYLOAD          ")
-                print("====================================")
-                print(json_formatted_str)
-                #print(f"Received message: {message}")
-                '''
             except Exception as e:
-                print("\n\n====================================")
-                print(f"An error occurred: {e}")
+                logger.info("++++++++++++++++++++++++++++++++++++++++")
+                logger.info(f"An error occurred: {e}")
             finally:
-                print("\n\n====================================")
-                print("WebSocket connection closed.")
+                logger.info("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+                logger.info("WebSocket connection closed.")
 
     await asyncio.gather(
         open_connection()
@@ -139,8 +139,11 @@ async def client_ui(api_endpoint):
 
 def main():
     # set for your query.
-    USER_INPUT="Did barbie win an oscar?"
-
+    questions=[
+        "Did barbie win an oscar?",
+        "Where is home alones house?",
+        "What city is home alone home?"
+    ]
 
     if( REST_X_API_KEY is None):
         raise ValueError("REST_SOCKET_X_API_KEY not set")
@@ -151,27 +154,33 @@ def main():
     
     BUILT_ENDPOINT=REST_API_ENDPOINT+"api/async/search"
     print("Built REST URL: ", BUILT_ENDPOINT)
-    print("User input: ", USER_INPUT)
 
-    # JSON payload
-    # possible choices for mode are "STREAM" and "DEFAULT"
-    # stream will stream the bedrock response for the answer, default will to a typical non streaming bedrock invocation
-    payload = {
-        "user_input": USER_INPUT,
-        "search_size": 10,
-        "bedrock_mode": "STREAM"
-    }
-    # Send the POST request with JSON payload
-    response = requests.post(BUILT_ENDPOINT, json=payload, headers=rest_headers)
-    data = response.json()
-    execution_arn = data["executionArn"]
-    print("Started stated machine: ", execution_arn)
-    sock_gateway = ApiGatewayWebsocket(WEBSOCKET_API_NAME, boto3.client("apigatewayv2"))
 
-    print("Starting websocket Client UI.")
-    _, api_endpoint = sock_gateway.get_websocket_api_info()
+    for USER_INPUT in questions:
+        logger.info("User input: %s", USER_INPUT)
 
-    asyncio.run(client_ui(f"{api_endpoint}/prod?execution_arn={execution_arn}"))
+        print("=========================")
+        print("User input: ", USER_INPUT)
+
+        # JSON payload
+        # possible choices for mode are "STREAM" and "DEFAULT"
+        # stream will stream the bedrock response for the answer, default will to a typical non streaming bedrock invocation
+        payload = {
+            "user_input": USER_INPUT,
+            "search_size": 10,
+            "bedrock_mode": "STREAM"
+        }
+        # Send the POST request with JSON payload
+        response = requests.post(BUILT_ENDPOINT, json=payload, headers=rest_headers)
+        data = response.json()
+        execution_arn = data["executionArn"]
+        logger.info("Started stated machine: %s", execution_arn)
+        sock_gateway = ApiGatewayWebsocket(WEBSOCKET_API_NAME, boto3.client("apigatewayv2"))
+
+        logger.info("Starting websocket Client UI.")
+        _, api_endpoint = sock_gateway.get_websocket_api_info()
+
+        asyncio.run(client_ui(f"{api_endpoint}/prod?execution_arn={execution_arn}"))
 
 if __name__ == "__main__":
     main()
